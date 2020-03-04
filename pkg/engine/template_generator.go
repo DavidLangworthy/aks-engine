@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -19,6 +20,8 @@ import (
 	"github.com/Azure/aks-engine/pkg/api/common"
 	"github.com/Azure/aks-engine/pkg/helpers"
 	"github.com/Azure/aks-engine/pkg/i18n"
+	"github.com/Azure/aks-engine/pkg/telemetry"
+
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -41,6 +44,10 @@ type TemplateGenerator struct {
 func InitializeTemplateGenerator(ctx Context) (*TemplateGenerator, error) {
 	t := &TemplateGenerator{
 		Translator: ctx.Translator,
+	}
+
+	if t.Translator == nil {
+		t.Translator = &i18n.Translator{}
 	}
 
 	if err := t.verifyFiles(); err != nil {
@@ -176,20 +183,8 @@ func (t *TemplateGenerator) GetMasterCustomDataJSONObject(cs *api.ContainerServi
 		panic(e)
 	}
 	// add manifests
-	str = substituteConfigString(str,
-		kubernetesManifestSettingsInit(profile),
-		"k8s/manifests",
-		"/etc/kubernetes/manifests",
-		"MASTER_MANIFESTS_CONFIG_PLACEHOLDER",
-		profile.OrchestratorProfile.OrchestratorVersion)
-
-	// add addons
-	str = substituteConfigString(str,
-		kubernetesAddonSettingsInit(profile),
-		"k8s/addons",
-		"/etc/kubernetes/addons",
-		"MASTER_ADDONS_CONFIG_PLACEHOLDER",
-		profile.OrchestratorProfile.OrchestratorVersion)
+	componentStr := getComponentsString(cs, "k8s/manifests")
+	str = strings.Replace(str, "MASTER_MANIFESTS_CONFIG_PLACEHOLDER", componentStr, -1)
 
 	// add custom files
 	customFilesReader, err := customfilesIntoReaders(masterCustomFiles(profile))
@@ -200,7 +195,7 @@ func (t *TemplateGenerator) GetMasterCustomDataJSONObject(cs *api.ContainerServi
 		customFilesReader,
 		"MASTER_CUSTOM_FILES_PLACEHOLDER")
 
-	addonStr := getContainerAddonsString(cs.Properties, "k8s/containeraddons")
+	addonStr := getAddonsString(cs, "k8s/addons")
 
 	str = strings.Replace(str, "MASTER_CONTAINER_ADDONS_PLACEHOLDER", addonStr, -1)
 
@@ -240,10 +235,15 @@ func (t *TemplateGenerator) GetKubernetesWindowsNodeCustomDataJSONObject(cs *api
 	return fmt.Sprintf("{\"customData\": \"[base64(concat('%s'))]\"}", str)
 }
 
-// getTemplateFuncMap returns all functions used in template generation
+// getTemplateFuncMap returns the general purpose template func map from getContainerServiceFuncMap
+func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) template.FuncMap {
+	return getContainerServiceFuncMap(cs)
+}
+
+// getContainerServiceFuncMap returns all functions used in template generation
 // These funcs are a thin wrapper for template generation operations,
 // all business logic is implemented in the underlying func
-func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) template.FuncMap {
+func getContainerServiceFuncMap(cs *api.ContainerService) template.FuncMap {
 	return template.FuncMap{
 		"IsAzureStackCloud": func() bool {
 			return cs.Properties.IsAzureStackCloud()
@@ -331,9 +331,6 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 		},
 		"UseManagedIdentity": func() bool {
 			return cs.Properties.OrchestratorProfile.KubernetesConfig.UseManagedIdentity
-		},
-		"NeedsKubeDNSWithExecHealthz": func() bool {
-			return cs.Properties.OrchestratorProfile.NeedsExecHealthz()
 		},
 		"GetVNETSubnetDependencies": func() string {
 			return getVNETSubnetDependencies(cs.Properties)
@@ -434,7 +431,7 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 		},
 		"GetMasterSwarmCustomData": func() string {
 			files := []string{swarmProvision}
-			str := buildYamlFileWithWriteFiles(files)
+			str := buildYamlFileWithWriteFiles(files, cs)
 			if cs.Properties.MasterProfile.PreprovisionExtension != nil {
 				extensionStr := makeMasterExtensionScriptCommands(cs)
 				str += "'runcmd:\n" + extensionStr + "\n\n'"
@@ -444,7 +441,7 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 		},
 		"GetAgentSwarmCustomData": func(profile *api.AgentPoolProfile) string {
 			files := []string{swarmProvision}
-			str := buildYamlFileWithWriteFiles(files)
+			str := buildYamlFileWithWriteFiles(files, cs)
 			str = escapeSingleLine(str)
 			return fmt.Sprintf("\"customData\": \"[base64(concat('%s',variables('%sRunCmdFile'),variables('%sRunCmd')))]\",", str, profile.Name, profile.Name)
 		},
@@ -460,11 +457,11 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 			return cs.Location
 		},
 		"GetWinAgentSwarmCustomData": func() string {
-			str := getBase64EncodedGzippedCustomScript(swarmWindowsProvision)
+			str := getBase64EncodedGzippedCustomScript(swarmWindowsProvision, cs)
 			return fmt.Sprintf("\"customData\": \"%s\"", str)
 		},
 		"GetWinAgentSwarmModeCustomData": func() string {
-			str := getBase64EncodedGzippedCustomScript(swarmModeWindowsProvision)
+			str := getBase64EncodedGzippedCustomScript(swarmModeWindowsProvision, cs)
 			return fmt.Sprintf("\"customData\": \"%s\"", str)
 		},
 		"GetKubernetesWindowsAgentFunctions": func() string {
@@ -475,6 +472,8 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 				kubernetesWindowsKubeletFunctionsPS1,
 				kubernetesWindowsCniFunctionsPS1,
 				kubernetesWindowsAzureCniFunctionsPS1,
+				kubernetesWindowsLogsCleanupPS1,
+				kubernetesWindowsNodeResetPS1,
 				kubernetesWindowsOpenSSHFunctionPS1}
 
 			// Create a buffer, new zip
@@ -503,7 +502,7 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 		},
 		"GetMasterSwarmModeCustomData": func() string {
 			files := []string{swarmModeProvision}
-			str := buildYamlFileWithWriteFiles(files)
+			str := buildYamlFileWithWriteFiles(files, cs)
 			if cs.Properties.MasterProfile.PreprovisionExtension != nil {
 				extensionStr := makeMasterExtensionScriptCommands(cs)
 				str += "runcmd:\n" + extensionStr + "\n\n"
@@ -513,7 +512,7 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 		},
 		"GetAgentSwarmModeCustomData": func(profile *api.AgentPoolProfile) string {
 			files := []string{swarmModeProvision}
-			str := buildYamlFileWithWriteFiles(files)
+			str := buildYamlFileWithWriteFiles(files, cs)
 			str = escapeSingleLine(str)
 			return fmt.Sprintf("\"customData\": \"[base64(concat('%s',variables('%sRunCmdFile'),variables('%sRunCmd')))]\",", str, profile.Name, profile.Name)
 		},
@@ -529,8 +528,8 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 		"WrapAsVerbatim": func(s string) string {
 			return common.WrapAsVerbatim(s)
 		},
-		"AnyAgentUsesAvailabilitySets": func() bool {
-			return cs.Properties.AnyAgentUsesAvailabilitySets()
+		"HasVMASAgentPool": func() bool {
+			return cs.Properties.HasVMASAgentPool()
 		},
 		"AnyAgentIsLinux": func() bool {
 			return cs.Properties.AnyAgentIsLinux()
@@ -541,20 +540,44 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 		"HasAvailabilityZones": func(profile *api.AgentPoolProfile) bool {
 			return profile.HasAvailabilityZones()
 		},
-		"HasLinuxProfile": func() bool {
-			return cs.Properties.LinuxProfile != nil
-		},
 		"HasLinuxSecrets": func() bool {
 			return cs.Properties.LinuxProfile.HasSecrets()
 		},
 		"HasCustomSearchDomain": func() bool {
-			return cs.Properties.LinuxProfile.HasSearchDomain()
+			return cs.Properties.LinuxProfile != nil && cs.Properties.LinuxProfile.HasSearchDomain()
+		},
+		"GetSearchDomainName": func() string {
+			if cs.Properties.LinuxProfile != nil && cs.Properties.LinuxProfile.HasSearchDomain() {
+				return cs.Properties.LinuxProfile.CustomSearchDomain.Name
+			}
+			return ""
+		},
+		"GetSearchDomainRealmUser": func() string {
+			if cs.Properties.LinuxProfile != nil && cs.Properties.LinuxProfile.HasSearchDomain() {
+				return cs.Properties.LinuxProfile.CustomSearchDomain.RealmUser
+			}
+			return ""
+		},
+		"GetSearchDomainRealmPassword": func() string {
+			if cs.Properties.LinuxProfile != nil && cs.Properties.LinuxProfile.HasSearchDomain() {
+				return cs.Properties.LinuxProfile.CustomSearchDomain.RealmPassword
+			}
+			return ""
 		},
 		"HasCiliumNetworkPlugin": func() bool {
 			return cs.Properties.OrchestratorProfile.KubernetesConfig.NetworkPlugin == NetworkPluginCilium
 		},
+		"HasCiliumNetworkPolicy": func() bool {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.NetworkPolicy == NetworkPolicyCilium
+		},
+		"HasAntreaNetworkPolicy": func() bool {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.NetworkPolicy == NetworkPolicyAntrea
+		},
+		"HasFlannelNetworkPlugin": func() bool {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.NetworkPlugin == NetworkPluginFlannel
+		},
 		"HasCustomNodesDNS": func() bool {
-			return cs.Properties.LinuxProfile.HasCustomNodesDNS()
+			return cs.Properties.LinuxProfile != nil && cs.Properties.LinuxProfile.HasCustomNodesDNS()
 		},
 		"HasWindowsSecrets": func() bool {
 			return cs.Properties.WindowsProfile.HasSecrets()
@@ -624,9 +647,6 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 			}
 			return false
 		},
-		"EnablePodSecurityPolicy": func() bool {
-			return to.Bool(cs.Properties.OrchestratorProfile.KubernetesConfig.EnablePodSecurityPolicy)
-		},
 		"IsCustomVNET": func() bool {
 			return cs.Properties.AreAgentProfilesCustomVNET()
 		},
@@ -655,6 +675,123 @@ func (t *TemplateGenerator) getTemplateFuncMap(cs *api.ContainerService) templat
 		},
 		"IsKataContainerRuntime": func() bool {
 			return cs.Properties.OrchestratorProfile.KubernetesConfig.ContainerRuntime == api.KataContainers
+		},
+		"IsDockerContainerRuntime": func() bool {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.ContainerRuntime == api.Docker
+		},
+		"HasNSeriesSKU": func() bool {
+			return cs.Properties.HasNSeriesSKU()
+		},
+		"HasDCSeriesSKU": func() bool {
+			return cs.Properties.HasDCSeriesSKU()
+		},
+		"HasCoreOS": func() bool {
+			return cs.Properties.HasCoreOS()
+		},
+		"RequiresDocker": func() bool {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.RequiresDocker()
+		},
+		"IsAzurePolicyAddonEnabled": func() bool {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.IsAddonEnabled(common.AzurePolicyAddonName)
+		},
+		"IsACIConnectorAddonEnabled": func() bool {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.IsAddonEnabled(common.ACIConnectorAddonName)
+		},
+		"IsClusterAutoscalerAddonEnabled": func() bool {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.IsAddonEnabled(common.ClusterAutoscalerAddonName)
+		},
+		"GetHyperkubeImageReference": func() string {
+			hyperkubeImageBase := cs.Properties.OrchestratorProfile.KubernetesConfig.KubernetesImageBase
+			k8sComponents := api.GetK8sComponentsByVersionMap(cs.Properties.OrchestratorProfile.KubernetesConfig)[cs.Properties.OrchestratorProfile.OrchestratorVersion]
+			hyperkubeImage := hyperkubeImageBase + k8sComponents[common.Hyperkube]
+			if cs.Properties.IsAzureStackCloud() {
+				hyperkubeImage = hyperkubeImage + common.AzureStackSuffix
+			}
+			if cs.Properties.OrchestratorProfile.KubernetesConfig.CustomHyperkubeImage != "" {
+				hyperkubeImage = cs.Properties.OrchestratorProfile.KubernetesConfig.CustomHyperkubeImage
+			}
+			return hyperkubeImage
+		},
+		"GetTargetEnvironment": func() string {
+			return helpers.GetTargetEnv(cs.Location, cs.Properties.GetCustomCloudName())
+		},
+		"GetCustomCloudConfigCSEScriptFilepath": func() string {
+			return customCloudConfigCSEScriptFilepath
+		},
+		"GetCSEHelpersScriptFilepath": func() string {
+			return cseHelpersScriptFilepath
+		},
+		"GetCSEInstallScriptFilepath": func() string {
+			return cseInstallScriptFilepath
+		},
+		"GetCSEConfigScriptFilepath": func() string {
+			return cseConfigScriptFilepath
+		},
+		"GetCustomSearchDomainsCSEScriptFilepath": func() string {
+			return customSearchDomainsCSEScriptFilepath
+		},
+		"GetDHCPv6ServiceCSEScriptFilepath": func() string {
+			return dhcpV6ServiceCSEScriptFilepath
+		},
+		"GetDHCPv6ConfigCSEScriptFilepath": func() string {
+			return dhcpV6ConfigCSEScriptFilepath
+		},
+		"HasPrivateAzureRegistryServer": func() bool {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.PrivateAzureRegistryServer != ""
+		},
+		"GetPrivateAzureRegistryServer": func() string {
+			return cs.Properties.OrchestratorProfile.KubernetesConfig.PrivateAzureRegistryServer
+		},
+		"HasTelemetryEnabled": func() bool {
+			return cs.Properties.FeatureFlags != nil && cs.Properties.FeatureFlags.EnableTelemetry
+		},
+		"GetApplicationInsightsTelemetryKeys": func() string {
+			userSuppliedAIKey := ""
+			if cs.Properties.TelemetryProfile != nil {
+				userSuppliedAIKey = cs.Properties.TelemetryProfile.ApplicationInsightsKey
+			}
+
+			possibleKeys := []string{
+				telemetry.AKSEngineAppInsightsKey,
+				userSuppliedAIKey,
+			}
+
+			var keys []string
+			for _, key := range possibleKeys {
+				if key != "" {
+					keys = append(keys, key)
+				}
+			}
+
+			return strings.Join(keys, ",")
+		},
+		"GetLinuxDefaultTelemetryTags": func() string {
+			tags := map[string]string{
+				"k8s_version":    cs.Properties.OrchestratorProfile.OrchestratorVersion,
+				"network_plugin": cs.Properties.OrchestratorProfile.KubernetesConfig.NetworkPlugin,
+				"network_policy": cs.Properties.OrchestratorProfile.KubernetesConfig.NetworkPolicy,
+				"network_mode":   cs.Properties.OrchestratorProfile.KubernetesConfig.NetworkMode,
+				"cri":            cs.Properties.OrchestratorProfile.KubernetesConfig.ContainerRuntime,
+				"cri_version":    cs.Properties.OrchestratorProfile.KubernetesConfig.ContainerdVersion,
+				"distro":         string(cs.Properties.LinuxProfile.Distro),
+				"os_image_sku":   cs.GetCloudSpecConfig().OSImageConfig[cs.Properties.LinuxProfile.Distro].ImageSku,
+				"os_type":        "linux",
+			}
+
+			var kvs []string
+			for k, v := range tags {
+				if v != "" {
+					kvs = append(kvs, fmt.Sprintf("%s=%s", k, v))
+				}
+			}
+			sort.Strings(kvs)
+			return strings.Join(kvs, ",")
+		},
+		"OpenBraces": func() string {
+			return "{{"
+		},
+		"CloseBraces": func() string {
+			return "}}"
 		},
 	}
 }

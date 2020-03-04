@@ -34,6 +34,7 @@ func TestUpgradeCommandShouldBeValidated(t *testing.T) {
 	cases := []struct {
 		uc          *upgradeCmd
 		expectedErr error
+		name        string
 	}{
 		{
 			uc: &upgradeCmd{
@@ -46,6 +47,7 @@ func TestUpgradeCommandShouldBeValidated(t *testing.T) {
 				cordonDrainTimeoutInMinutes: 60,
 			},
 			expectedErr: errors.New("--resource-group must be specified"),
+			name:        "NeedsResourceGroup",
 		},
 		{
 			uc: &upgradeCmd{
@@ -58,6 +60,7 @@ func TestUpgradeCommandShouldBeValidated(t *testing.T) {
 				cordonDrainTimeoutInMinutes: 60,
 			},
 			expectedErr: errors.New("--location must be specified"),
+			name:        "NeedsLocation",
 		},
 		{
 			uc: &upgradeCmd{
@@ -70,6 +73,7 @@ func TestUpgradeCommandShouldBeValidated(t *testing.T) {
 				cordonDrainTimeoutInMinutes: 60,
 			},
 			expectedErr: errors.New("--upgrade-version must be specified"),
+			name:        "NeedsUpgradeVersion",
 		},
 		{
 			uc: &upgradeCmd{
@@ -82,6 +86,7 @@ func TestUpgradeCommandShouldBeValidated(t *testing.T) {
 				cordonDrainTimeoutInMinutes: 60,
 			},
 			expectedErr: errors.New("--api-model must be specified"),
+			name:        "NeedsAPIModel",
 		},
 		{
 			uc: &upgradeCmd{
@@ -94,6 +99,7 @@ func TestUpgradeCommandShouldBeValidated(t *testing.T) {
 				cordonDrainTimeoutInMinutes: 60,
 			},
 			expectedErr: errors.New("ambiguous, please specify only one of --api-model and --deployment-dir"),
+			name:        "NeedsNonAmbiguous",
 		},
 		{
 			uc: &upgradeCmd{
@@ -104,21 +110,28 @@ func TestUpgradeCommandShouldBeValidated(t *testing.T) {
 				location:            "southcentralus",
 			},
 			expectedErr: nil,
+			name:        "IsValid",
 		},
 	}
 
-	for _, c := range cases {
-		err := c.uc.validate(r)
-		if c.expectedErr != nil && err != nil {
-			g.Expect(err.Error()).To(Equal(c.expectedErr.Error()))
-		} else {
-			g.Expect(err).To(BeNil())
-			g.Expect(c.expectedErr).To(BeNil())
-		}
+	for _, tc := range cases {
+		c := tc
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			err := c.uc.validate(r)
+			if c.expectedErr != nil && err != nil {
+				g.Expect(err.Error()).To(Equal(c.expectedErr.Error()))
+			} else {
+				g.Expect(err).To(BeNil())
+				g.Expect(c.expectedErr).To(BeNil())
+			}
+		})
 	}
 }
 
 func TestCreateUpgradeCommand(t *testing.T) {
+	t.Parallel()
+
 	g := NewGomegaWithT(t)
 	command := newUpgradeCmd()
 
@@ -281,4 +294,210 @@ func TestUpgradeForceDowngradeShouldSetVersionOnContainerService(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(upgradeCmd.containerService.Properties.OrchestratorProfile.OrchestratorVersion).To(Equal("1.10.12"))
 	resetValidVersions()
+}
+
+func TestIsVMSSNameInAgentPoolsArray(t *testing.T) {
+	cases := []struct {
+		vmssName string
+		cs       *api.ContainerService
+		expected bool
+		name     string
+	}{
+		{
+			vmssName: "k8s-agentpool1-41325566-vmss",
+			cs: &api.ContainerService{
+				Properties: &api.Properties{
+					OrchestratorProfile: &api.OrchestratorProfile{
+						OrchestratorType:    api.Kubernetes,
+						OrchestratorVersion: "1.15.4",
+						KubernetesConfig: &api.KubernetesConfig{
+							ContainerRuntime: api.Docker,
+						},
+					},
+					AgentPoolProfiles: []*api.AgentPoolProfile{
+						{
+							Name:                "agentpool1",
+							Count:               1,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+					},
+				},
+			},
+			expected: true,
+			name:     "vmss is in the api model spec",
+		},
+		{
+			vmssName: "my-vmss",
+			cs: &api.ContainerService{
+				Properties: &api.Properties{
+					OrchestratorProfile: &api.OrchestratorProfile{
+						OrchestratorType:    api.Kubernetes,
+						OrchestratorVersion: "1.15.4",
+						KubernetesConfig: &api.KubernetesConfig{
+							ContainerRuntime: api.Docker,
+						},
+					},
+					AgentPoolProfiles: []*api.AgentPoolProfile{
+						{
+							Name:                "agentpool1",
+							Count:               1,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+					},
+				},
+			},
+			expected: false,
+			name:     "vmss unrecognized",
+		},
+		{
+			vmssName: "k8s-frontendpool-41325566-vmss",
+			cs: &api.ContainerService{
+				Properties: &api.Properties{
+					OrchestratorProfile: &api.OrchestratorProfile{
+						OrchestratorType:    api.Kubernetes,
+						OrchestratorVersion: "1.15.4",
+						KubernetesConfig: &api.KubernetesConfig{
+							ContainerRuntime: api.Docker,
+						},
+					},
+					AgentPoolProfiles: []*api.AgentPoolProfile{
+						{
+							Name:                "frontendpool",
+							Count:               30,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+						{
+							Name:                "backendpool",
+							Count:               7,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+						{
+							Name:                "canary",
+							Count:               5,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+					},
+				},
+			},
+			expected: true,
+			name:     "multiple pools, frontendpool vmss is in spec",
+		},
+		{
+			vmssName: "k8s-backendpool-41325566-vmss",
+			cs: &api.ContainerService{
+				Properties: &api.Properties{
+					OrchestratorProfile: &api.OrchestratorProfile{
+						OrchestratorType:    api.Kubernetes,
+						OrchestratorVersion: "1.15.4",
+						KubernetesConfig: &api.KubernetesConfig{
+							ContainerRuntime: api.Docker,
+						},
+					},
+					AgentPoolProfiles: []*api.AgentPoolProfile{
+						{
+							Name:                "frontendpool",
+							Count:               30,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+						{
+							Name:                "backendpool",
+							Count:               7,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+						{
+							Name:                "canary",
+							Count:               5,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+					},
+				},
+			},
+			expected: true,
+			name:     "multiple pools, backendpool vmss is in spec",
+		},
+		{
+			vmssName: "k8s-canary-41325566-vmss",
+			cs: &api.ContainerService{
+				Properties: &api.Properties{
+					OrchestratorProfile: &api.OrchestratorProfile{
+						OrchestratorType:    api.Kubernetes,
+						OrchestratorVersion: "1.15.4",
+						KubernetesConfig: &api.KubernetesConfig{
+							ContainerRuntime: api.Docker,
+						},
+					},
+					AgentPoolProfiles: []*api.AgentPoolProfile{
+						{
+							Name:                "frontendpool",
+							Count:               30,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+						{
+							Name:                "backendpool",
+							Count:               7,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+						{
+							Name:                "canary",
+							Count:               5,
+							AvailabilityProfile: api.VirtualMachineScaleSets,
+						},
+					},
+				},
+			},
+			expected: true,
+			name:     "multiple pools, canary vmss is in spec",
+		},
+		{
+			vmssName: "k8s-canary-41325566-vmss",
+			cs: &api.ContainerService{
+				Properties: &api.Properties{
+					OrchestratorProfile: &api.OrchestratorProfile{
+						OrchestratorType:    api.Kubernetes,
+						OrchestratorVersion: "1.15.4",
+						KubernetesConfig: &api.KubernetesConfig{
+							ContainerRuntime: api.Docker,
+						},
+					},
+					AgentPoolProfiles: []*api.AgentPoolProfile{},
+				},
+			},
+			expected: false,
+			name:     "no pools",
+		},
+		{
+			vmssName: "k8s-canary-41325566-vmss",
+			cs: &api.ContainerService{
+				Properties: &api.Properties{
+					OrchestratorProfile: &api.OrchestratorProfile{
+						OrchestratorType:    api.Kubernetes,
+						OrchestratorVersion: "1.15.4",
+						KubernetesConfig: &api.KubernetesConfig{
+							ContainerRuntime: api.Docker,
+						},
+					},
+					AgentPoolProfiles: []*api.AgentPoolProfile{
+						{
+							Name:                "canary",
+							Count:               1,
+							AvailabilityProfile: api.AvailabilitySet,
+						},
+					},
+				},
+			},
+			expected: false,
+			name:     "availability set",
+		},
+	}
+
+	for _, tc := range cases {
+		c := tc
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ret := isVMSSNameInAgentPoolsArray(c.vmssName, c.cs)
+			if ret != c.expected {
+				t.Errorf("expected %t to be %t", ret, c.expected)
+			}
+		})
+	}
 }

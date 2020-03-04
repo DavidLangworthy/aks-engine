@@ -40,6 +40,14 @@
           {
             "name": "container-monitoring",
             "enabled": false
+          },
+          {
+            "name": "azure-policy",
+            "enabled": false
+          },
+          {
+            "name": "node-problem-detector",
+            "enabled": false
           }
         ]
       }

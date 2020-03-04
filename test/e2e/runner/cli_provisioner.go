@@ -1,3 +1,4 @@
+//+build test
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
@@ -118,9 +119,13 @@ func (cli *CLIProvisioner) provision() error {
 
 	os.Setenv("DNS_PREFIX", cli.Config.Name)
 
-	err := cli.Account.CreateGroupWithRetry(cli.Config.Name, cli.Config.Location, 3*time.Second, cli.Config.Timeout)
+	err := cli.Account.CreateGroupWithRetry(cli.Config.Name, cli.Config.Location, 30*time.Second, cli.Config.Timeout)
 	if err != nil {
 		return errors.Wrap(err, "Error while trying to create resource group")
+	}
+	err = cli.Account.ShowGroupWithRetry(cli.Account.ResourceGroup.Name, 10*time.Second, cli.Config.Timeout)
+	if err != nil {
+		return errors.Wrap(err, "Unable to successfully get the resource group using the az CLI")
 	}
 
 	subnetID := ""
@@ -142,16 +147,16 @@ func (cli *CLIProvisioner) provision() error {
 	if cli.CreateVNET {
 		if cli.MasterVMSS {
 			agentSubnetName := fmt.Sprintf("%sCustomSubnetAgent", cli.Config.Name)
-			err = cli.Account.CreateVnetWithRetry(vnetName, "10.239.0.0/16", 3*time.Second, cli.Config.Timeout)
+			err = cli.Account.CreateVnet(vnetName, "10.239.0.0/16")
 			if err != nil {
 				return errors.Errorf("Error trying to create vnet:%s", err.Error())
 			}
-			err = cli.Account.CreateSubnetWithRetry(vnetName, masterSubnetName, "10.239.0.0/17", 3*time.Second, cli.Config.Timeout)
+			err = cli.Account.CreateSubnet(vnetName, masterSubnetName, "10.239.0.0/17")
 			if err != nil {
 				return errors.Errorf("Error trying to create subnet:%s", err.Error())
 			}
 			subnets = append(subnets, masterSubnetName)
-			err = cli.Account.CreateSubnetWithRetry(vnetName, agentSubnetName, "10.239.128.0/17", 3*time.Second, cli.Config.Timeout)
+			err = cli.Account.CreateSubnet(vnetName, agentSubnetName, "10.239.128.0/17")
 			if err != nil {
 				return errors.Errorf("Error trying to create subnet in subnet:%s", err.Error())
 			}
@@ -159,18 +164,18 @@ func (cli *CLIProvisioner) provision() error {
 			agentSubnetID = fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/%s/subnets/%s", cli.Account.SubscriptionID, cli.Account.ResourceGroup.Name, vnetName, agentSubnetName)
 
 		} else {
-			err = cli.Account.CreateVnetWithRetry(vnetName, "10.239.0.0/16", 3*time.Second, cli.Config.Timeout)
+			err = cli.Account.CreateVnet(vnetName, "10.239.0.0/16")
 			if err != nil {
 				return errors.Errorf("Error trying to create vnet:%s", err.Error())
 			}
-			err = cli.Account.CreateSubnetWithRetry(vnetName, masterSubnetName, "10.239.255.0/24", 3*time.Second, cli.Config.Timeout)
+			err = cli.Account.CreateSubnet(vnetName, masterSubnetName, "10.239.255.0/24")
 			if err != nil {
 				return errors.Errorf("Error trying to create subnet:%s", err.Error())
 			}
 			subnets = append(subnets, masterSubnetName)
 			for i, pool := range cs.ContainerService.Properties.AgentPoolProfiles {
 				subnetName := fmt.Sprintf("%sCustomSubnet", pool.Name)
-				err = cli.Account.CreateSubnetWithRetry(vnetName, subnetName, fmt.Sprintf("10.239.%d.0/20", i*16), 3*time.Second, cli.Config.Timeout)
+				err = cli.Account.CreateSubnet(vnetName, subnetName, fmt.Sprintf("10.239.%d.0/20", i*16))
 				if err != nil {
 					return errors.Errorf("Error trying to create subnet:%s", err.Error())
 				}
@@ -220,7 +225,7 @@ func (cli *CLIProvisioner) provision() error {
 
 	if cli.Config.IsKubernetes() {
 		// Store the hosts for future introspection
-		hosts, err := cli.Account.GetHostsWithRetry(cli.Config.Name, 3*time.Second, cli.Config.Timeout)
+		hosts, err := cli.Account.GetHosts(cli.Config.Name)
 		if err != nil {
 			return errors.Wrap(err, "GetHosts:%s")
 		}
@@ -277,7 +282,7 @@ func (cli *CLIProvisioner) generateAndDeploy() error {
 
 	//if we use Generate, then we need to call CreateDeployment
 	if !cli.Config.UseDeployCommand {
-		err = cli.Account.CreateDeploymentWithRetry(cli.Config.Name, cli.Engine, 30*time.Second, 60*time.Minute)
+		err = cli.Account.CreateDeployment(cli.Config.Name, cli.Engine)
 		if err != nil {
 			return errors.Wrap(err, "Error while trying to create deployment")
 		}
@@ -298,7 +303,7 @@ func (cli *CLIProvisioner) waitForNodes() error {
 		if !cli.IsPrivate() {
 			log.Println("Waiting on nodes to go into ready state...")
 			var expectedReadyNodes int
-			if !cli.Engine.ExpandedDefinition.Properties.HasLowPriorityScaleset() {
+			if !cli.Engine.ExpandedDefinition.Properties.HasNonRegularPriorityScaleset() {
 				expectedReadyNodes = cli.Engine.NodeCount()
 				log.Printf("Checking for %d Ready nodes\n", expectedReadyNodes)
 			} else {
@@ -315,7 +320,7 @@ func (cli *CLIProvisioner) waitForNodes() error {
 			if err != nil {
 				return errors.Wrap(err, "Unable to get the list of nodes")
 			}
-			if !cli.Engine.ExpandedDefinition.Properties.HasLowPriorityScaleset() {
+			if !cli.Engine.ExpandedDefinition.Properties.HasNonRegularPriorityScaleset() {
 				for _, n := range nodes {
 					exp, err := regexp.Compile("k8s-master")
 					if err != nil {

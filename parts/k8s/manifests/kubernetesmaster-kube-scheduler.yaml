@@ -11,10 +11,10 @@ spec:
   hostNetwork: true
   containers:
     - name: kube-scheduler
-      image: <img>
+      image: {{ContainerImage "kube-scheduler"}}
       imagePullPolicy: IfNotPresent
-      command: ["/hyperkube", "kube-scheduler"]
-      args: [<args>]
+      command: [{{ContainerConfig "command"}}]
+      args: [{{GetSchedulerArgs}}]
       volumeMounts:
         - name: etc-kubernetes
           mountPath: /etc/kubernetes

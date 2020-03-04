@@ -4,20 +4,14 @@
 package api
 
 import (
-	"net/url"
 	"testing"
 
+	"github.com/Azure/aks-engine/pkg/api/common"
 	"github.com/Azure/go-autorest/autorest/to"
-
-	v20160330 "github.com/Azure/aks-engine/pkg/api/v20160330"
-	v20170131 "github.com/Azure/aks-engine/pkg/api/v20170131"
 
 	"github.com/davecgh/go-spew/spew"
 	"k8s.io/apimachinery/pkg/api/equality"
 
-	"github.com/Azure/aks-engine/pkg/api/common"
-	v20160930 "github.com/Azure/aks-engine/pkg/api/v20160930"
-	v20170701 "github.com/Azure/aks-engine/pkg/api/v20170701"
 	"github.com/Azure/aks-engine/pkg/api/vlabs"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/google/go-cmp/cmp"
@@ -88,65 +82,6 @@ func getProperties(profiles []*AgentPoolProfile, master *MasterProfile) *Propert
 	return &Properties{
 		AgentPoolProfiles: profiles,
 		MasterProfile:     master,
-	}
-}
-
-func TestOrchestratorVersion(t *testing.T) {
-	// test v20170701
-	v20170701cs := &v20170701.ContainerService{
-		Properties: &v20170701.Properties{
-			OrchestratorProfile: &v20170701.OrchestratorProfile{
-				OrchestratorType: v20170701.Kubernetes,
-			},
-		},
-	}
-	cs := ConvertV20170701ContainerService(v20170701cs, false)
-	if cs.Properties.OrchestratorProfile.OrchestratorVersion != common.GetDefaultKubernetesVersion(false) {
-		t.Fatalf("incorrect OrchestratorVersion '%s'", cs.Properties.OrchestratorProfile.OrchestratorVersion)
-	}
-
-	v20170701cs = &v20170701.ContainerService{
-		Properties: &v20170701.Properties{
-			OrchestratorProfile: &v20170701.OrchestratorProfile{
-				OrchestratorType:    v20170701.Kubernetes,
-				OrchestratorVersion: "1.7.14",
-			},
-		},
-	}
-	cs = ConvertV20170701ContainerService(v20170701cs, true)
-	if cs.Properties.OrchestratorProfile.OrchestratorVersion != "1.7.14" {
-		t.Fatalf("incorrect OrchestratorVersion '%s'", cs.Properties.OrchestratorProfile.OrchestratorVersion)
-	}
-	// test vlabs
-	vlabscs := &vlabs.ContainerService{
-		Properties: &vlabs.Properties{
-			OrchestratorProfile: &vlabs.OrchestratorProfile{
-				OrchestratorType: vlabs.Kubernetes,
-			},
-		},
-	}
-	cs, err := ConvertVLabsContainerService(vlabscs, false)
-	if err != nil {
-		t.Fatalf("Failed to convert ContainerService, error: %s", err)
-	}
-	if cs.Properties.OrchestratorProfile.OrchestratorVersion != common.GetDefaultKubernetesVersion(false) {
-		t.Fatalf("incorrect OrchestratorVersion '%s'", cs.Properties.OrchestratorProfile.OrchestratorVersion)
-	}
-
-	vlabscs = &vlabs.ContainerService{
-		Properties: &vlabs.Properties{
-			OrchestratorProfile: &vlabs.OrchestratorProfile{
-				OrchestratorType:    vlabs.Kubernetes,
-				OrchestratorVersion: "1.10.13",
-			},
-		},
-	}
-	cs, err = ConvertVLabsContainerService(vlabscs, false)
-	if err != nil {
-		t.Fatalf("Failed to convert ContainerService, error: %s", err)
-	}
-	if cs.Properties.OrchestratorProfile.OrchestratorVersion != "1.10.13" {
-		t.Fatalf("incorrect OrchestratorVersion '%s'", cs.Properties.OrchestratorProfile.OrchestratorVersion)
 	}
 }
 
@@ -534,230 +469,6 @@ func TestConvertAzureEnvironmentSpecConfig(t *testing.T) {
 		} else {
 			t.Errorf("incorrect OSImageConfig: '%s' is missing", string(k))
 		}
-	}
-}
-
-func TestConvertV20160930ContainerService(t *testing.T) {
-	storageURL, _ := url.Parse("https://bing.com")
-	v20160930CS := &v20160930.ContainerService{
-		Location: "westus2",
-		Plan: &v20160930.ResourcePurchasePlan{
-			Name:          "fooPlan",
-			PromotionCode: "fooPromoCode",
-			Product:       "fooProduct",
-			Publisher:     "fooPublisher",
-		},
-
-		Tags: map[string]string{
-			"foo": "bar",
-		},
-		Properties: &v20160930.Properties{
-			ProvisioningState: v20160930.Succeeded,
-			OrchestratorProfile: &v20160930.OrchestratorProfile{
-				OrchestratorType: DCOS,
-			},
-			WindowsProfile: &v20160930.WindowsProfile{
-				AdminUsername: "sampleAdminUsername",
-				AdminPassword: "sampleAdminPassword",
-			},
-			DiagnosticsProfile: &v20160930.DiagnosticsProfile{
-				VMDiagnostics: &v20160930.VMDiagnostics{
-					Enabled:    true,
-					StorageURL: storageURL,
-				},
-			},
-			JumpboxProfile: &v20160930.JumpboxProfile{
-				OSType:    "Linux",
-				DNSPrefix: "blueorange",
-				FQDN:      "blueorange.westus2.azureapp.com",
-			},
-			AgentPoolProfiles: []*v20160930.AgentPoolProfile{
-				{
-					Name:      "sampleagent",
-					Count:     2,
-					VMSize:    "Standard_DS1_v1",
-					DNSPrefix: "blueorange",
-					FQDN:      "blueorange.westus2.azureapp.com",
-					OSType:    "Linux",
-				},
-			},
-			MasterProfile: &v20160930.MasterProfile{
-				Count: 1,
-			},
-			CustomProfile: &v20160930.CustomProfile{
-				Orchestrator: DCOS,
-			},
-		},
-	}
-
-	apiCs := ConvertV20160930ContainerService(v20160930CS)
-
-	if apiCs == nil {
-		t.Error("unexpected nil output while executing ConvertV20160930ContainerService")
-	}
-}
-
-func TestConvertV20170701ContainerService(t *testing.T) {
-	v20170701CS := &v20170701.ContainerService{
-		Location: "westus2",
-		Plan: &v20170701.ResourcePurchasePlan{
-			Name:          "fooPlan",
-			PromotionCode: "fooPromoCode",
-			Product:       "fooProduct",
-			Publisher:     "fooPublisher",
-		},
-
-		Tags: map[string]string{
-			"foo": "bar",
-		},
-		Properties: &v20170701.Properties{
-			ProvisioningState: v20170701.Succeeded,
-			OrchestratorProfile: &v20170701.OrchestratorProfile{
-				OrchestratorType: DCOS,
-			},
-			WindowsProfile: &v20170701.WindowsProfile{
-				AdminUsername: "sampleAdminUsername",
-				AdminPassword: "sampleAdminPassword",
-			},
-			AgentPoolProfiles: []*v20170701.AgentPoolProfile{
-				{
-					Name:      "sampleagent",
-					Count:     2,
-					VMSize:    "Standard_DS1_v1",
-					DNSPrefix: "blueorange",
-					FQDN:      "blueorange.westus2.azureapp.com",
-					OSType:    "Linux",
-				},
-			},
-			MasterProfile: &v20170701.MasterProfile{
-				Count: 1,
-			},
-			CustomProfile: &v20170701.CustomProfile{
-				Orchestrator: DCOS,
-			},
-		},
-	}
-
-	apiCs := ConvertV20170701ContainerService(v20170701CS, false)
-
-	if apiCs == nil {
-		t.Error("unexpected nil output while executing ConvertV20170701ContainerService")
-	}
-}
-
-func TestConvertV20160330ContainerService(t *testing.T) {
-	storageURL, _ := url.Parse("https://bing.com")
-	v20160330CS := &v20160330.ContainerService{
-		Location: "westus2",
-		Plan: &v20160330.ResourcePurchasePlan{
-			Name:          "fooPlan",
-			PromotionCode: "fooPromoCode",
-			Product:       "fooProduct",
-			Publisher:     "fooPublisher",
-		},
-
-		Tags: map[string]string{
-			"foo": "bar",
-		},
-		Properties: &v20160330.Properties{
-			ProvisioningState: v20160330.Succeeded,
-			OrchestratorProfile: &v20160330.OrchestratorProfile{
-				OrchestratorType: DCOS,
-			},
-			WindowsProfile: &v20160330.WindowsProfile{
-				AdminUsername: "sampleAdminUsername",
-				AdminPassword: "sampleAdminPassword",
-			},
-			DiagnosticsProfile: &v20160330.DiagnosticsProfile{
-				VMDiagnostics: &v20160330.VMDiagnostics{
-					Enabled:    true,
-					StorageURL: storageURL,
-				},
-			},
-			JumpboxProfile: &v20160330.JumpboxProfile{
-				OSType:    "Linux",
-				DNSPrefix: "blueorange",
-				FQDN:      "blueorange.westus2.azureapp.com",
-			},
-			AgentPoolProfiles: []*v20160330.AgentPoolProfile{
-				{
-					Name:      "sampleagent",
-					Count:     2,
-					VMSize:    "Standard_DS1_v1",
-					DNSPrefix: "blueorange",
-					FQDN:      "blueorange.westus2.azureapp.com",
-					OSType:    "Linux",
-				},
-			},
-			MasterProfile: &v20160330.MasterProfile{
-				Count: 1,
-			},
-		},
-	}
-
-	apiCs := ConvertV20160330ContainerService(v20160330CS)
-
-	if apiCs == nil {
-		t.Error("unexpected nil output while executing ConvertV20160330ContainerService")
-	}
-}
-
-func TestConvertV20170131ContainerService(t *testing.T) {
-	storageURL, _ := url.Parse("https://bing.com")
-	v20170131CS := &v20170131.ContainerService{
-		Location: "westus2",
-		Plan: &v20170131.ResourcePurchasePlan{
-			Name:          "fooPlan",
-			PromotionCode: "fooPromoCode",
-			Product:       "fooProduct",
-			Publisher:     "fooPublisher",
-		},
-
-		Tags: map[string]string{
-			"foo": "bar",
-		},
-		Properties: &v20170131.Properties{
-			ProvisioningState: v20170131.Succeeded,
-			OrchestratorProfile: &v20170131.OrchestratorProfile{
-				OrchestratorType: DCOS,
-			},
-			WindowsProfile: &v20170131.WindowsProfile{
-				AdminUsername: "sampleAdminUsername",
-				AdminPassword: "sampleAdminPassword",
-			},
-			DiagnosticsProfile: &v20170131.DiagnosticsProfile{
-				VMDiagnostics: &v20170131.VMDiagnostics{
-					Enabled:    true,
-					StorageURL: storageURL,
-				},
-			},
-			JumpboxProfile: &v20170131.JumpboxProfile{
-				OSType:    "Linux",
-				DNSPrefix: "blueorange",
-				FQDN:      "blueorange.westus2.azureapp.com",
-			},
-			AgentPoolProfiles: []*v20170131.AgentPoolProfile{
-				{
-					Name:      "sampleagent",
-					Count:     2,
-					VMSize:    "Standard_DS1_v1",
-					DNSPrefix: "blueorange",
-					FQDN:      "blueorange.westus2.azureapp.com",
-					OSType:    "Linux",
-				},
-			},
-			MasterProfile: &v20170131.MasterProfile{
-				Count: 1,
-			},
-			CustomProfile: &v20170131.CustomProfile{
-				Orchestrator: DCOS,
-			},
-		},
-	}
-
-	apiCs := ConvertV20170131ContainerService(v20170131CS)
-	if apiCs == nil {
-		t.Error("unexpected nil output while executing ConvertV20170131ContainerService")
 	}
 }
 
@@ -1337,6 +1048,37 @@ func TestSetVlabsKubernetesDefaults(t *testing.T) {
 			expectedNetworkPlugin: "",
 			expectedNetworkPolicy: "cilium",
 		},
+		{
+			name: "antrea networkPlugin",
+			p: &vlabs.Properties{
+				OrchestratorProfile: &vlabs.OrchestratorProfile{
+					KubernetesConfig: &vlabs.KubernetesConfig{
+						NetworkPlugin: "",
+						NetworkPolicy: "antrea",
+					},
+				},
+			},
+			expectedNetworkPlugin: "",
+			expectedNetworkPolicy: "antrea",
+		},
+		{
+			name: "flannel addon",
+			p: &vlabs.Properties{
+				OrchestratorProfile: &vlabs.OrchestratorProfile{
+					KubernetesConfig: &vlabs.KubernetesConfig{
+						NetworkPlugin: "",
+						Addons: []vlabs.KubernetesAddon{
+							{
+								Name:    common.FlannelAddonName,
+								Enabled: to.BoolPtr(true),
+							},
+						},
+					},
+				},
+			},
+			expectedNetworkPlugin: NetworkPluginFlannel,
+			expectedNetworkPolicy: "",
+		},
 	}
 
 	for _, test := range tests {
@@ -1349,5 +1091,163 @@ func TestSetVlabsKubernetesDefaults(t *testing.T) {
 				t.Errorf("expected NetworkPlugin : %s, but got %s", test.expectedNetworkPlugin, converted.KubernetesConfig.NetworkPlugin)
 			}
 		})
+	}
+}
+
+func TestConvertVLabsTelemetryProfile(t *testing.T) {
+	vlabscs := &vlabs.ContainerService{
+		Properties: &vlabs.Properties{
+			TelemetryProfile: &vlabs.TelemetryProfile{
+				ApplicationInsightsKey: "app_insights_key",
+			},
+		},
+	}
+
+	cs, err := ConvertVLabsContainerService(vlabscs, false)
+	if err != nil {
+		t.Errorf("Error converting ContainerService: %s", err)
+	}
+
+	if cs.Properties.TelemetryProfile == nil {
+		t.Error("Expected TelemetryProfile to be populated")
+	}
+
+	if cs.Properties.TelemetryProfile.ApplicationInsightsKey != "app_insights_key" {
+		t.Error("Expected TelemetryProfile.ApplicationInsightsKey to be set")
+	}
+}
+
+func TestConvertVlabsPlatformUpdateDomain(t *testing.T) {
+	vlabscs := &vlabs.ContainerService{
+		Properties: &vlabs.Properties{
+			OrchestratorProfile: &vlabs.OrchestratorProfile{
+				OrchestratorType: vlabs.Kubernetes,
+			},
+			MasterProfile: &vlabs.MasterProfile{
+				PlatformUpdateDomainCount: to.IntPtr(3),
+			},
+			AgentPoolProfiles: []*vlabs.AgentPoolProfile{
+				{
+					PlatformUpdateDomainCount: to.IntPtr(3),
+				},
+			},
+		},
+	}
+	cs, err := ConvertVLabsContainerService(vlabscs, false)
+	if err != nil {
+		t.Errorf("Error converting ContainerService: %s", err)
+	}
+	if cs == nil {
+		t.Errorf("expected the converted containerService struct to be non-nil")
+	}
+	if *cs.Properties.MasterProfile.PlatformUpdateDomainCount != 3 {
+		t.Errorf("expected the master profile platform FD to be 3")
+	}
+	if *cs.Properties.AgentPoolProfiles[0].PlatformUpdateDomainCount != 3 {
+		t.Errorf("expected the agent pool profile platform FD to be 3")
+	}
+}
+
+func TestConvertComponentsToAPI(t *testing.T) {
+	vk := &vlabs.KubernetesConfig{
+		Components: []vlabs.KubernetesComponent{
+			{
+				Name:    "component-0",
+				Enabled: to.BoolPtr(true),
+				Containers: []vlabs.KubernetesContainerSpec{
+					{
+						Name:           "component-0-container-0",
+						Image:          "baz",
+						CPURequests:    "1",
+						MemoryRequests: "200m",
+						CPULimits:      "2",
+						MemoryLimits:   "400m",
+					},
+					{
+						Name:           "component-0-container-1",
+						Image:          "baz-1",
+						CPURequests:    "1-1",
+						MemoryRequests: "200m-1",
+						CPULimits:      "2-1",
+						MemoryLimits:   "400m-1",
+					},
+				},
+				Config: map[string]string{
+					"foo":     "bar",
+					"command": "my-command",
+				},
+				Data: "my-data",
+			},
+			{
+				Name:    "component-1",
+				Enabled: to.BoolPtr(false),
+				Containers: []vlabs.KubernetesContainerSpec{
+					{
+						Name:           "component-1-container-0",
+						Image:          "baz",
+						CPURequests:    "1",
+						MemoryRequests: "200m",
+						CPULimits:      "2",
+						MemoryLimits:   "400m",
+					},
+					{
+						Name:           "component-1-container-1",
+						Image:          "baz-1",
+						CPURequests:    "1-1",
+						MemoryRequests: "200m-1",
+						CPULimits:      "2-1",
+						MemoryLimits:   "400m-1",
+					},
+				},
+				Config: map[string]string{
+					"foo":     "bar",
+					"command": "my-command",
+				},
+				Data: "my-data",
+			},
+		},
+	}
+	k := &KubernetesConfig{}
+	convertComponentsToAPI(vk, k)
+	for i, component := range vk.Components {
+		if k.Components[i].Name != component.Name {
+			t.Errorf("unexpected Component.Name property %s after convertComponentsToVlabs conversion, expected %s", k.Components[i].Name, component.Name)
+		}
+		if to.Bool(k.Components[i].Enabled) != to.Bool(component.Enabled) {
+			t.Errorf("unexpected Component.Enabled property %t after convertComponentsToVlabs conversion, expected %t", to.Bool(k.Components[i].Enabled), to.Bool(component.Enabled))
+		}
+		if k.Components[i].Data != component.Data {
+			t.Errorf("unexpected Component.Data property %s after convertComponentsToVlabs conversion, expected %s", k.Components[i].Data, component.Data)
+		}
+		for j, container := range component.Containers {
+			if k.Components[i].Containers[j].Name != container.Name {
+				t.Errorf("unexpected Container.Name property %s after convertComponentsToVlabs conversion, expected %s", k.Components[i].Containers[j].Name, container.Name)
+			}
+			if k.Components[i].Containers[j].Image != container.Image {
+				t.Errorf("unexpected Container.Image property %s after convertComponentsToVlabs conversion, expected %s", k.Components[i].Containers[j].Image, container.Image)
+			}
+			if k.Components[i].Containers[j].CPURequests != container.CPURequests {
+				t.Errorf("unexpected Container.CPURequests property %s after convertComponentsToVlabs conversion, expected %s", k.Components[i].Containers[j].CPURequests, container.CPURequests)
+			}
+			if k.Components[i].Containers[j].MemoryRequests != container.MemoryRequests {
+				t.Errorf("unexpected Container.MemoryRequests property %s after convertComponentsToVlabs conversion, expected %s", k.Components[i].Containers[j].MemoryRequests, container.MemoryRequests)
+			}
+			if k.Components[i].Containers[j].CPULimits != container.CPULimits {
+				t.Errorf("unexpected Container.CPULimits property %s after convertComponentsToVlabs conversion, expected %s", k.Components[i].Containers[j].CPULimits, container.CPULimits)
+			}
+			if k.Components[i].Containers[j].MemoryLimits != container.MemoryLimits {
+				t.Errorf("unexpected Container.MemoryLimits property %s after convertComponentsToVlabs conversion, expected %s", k.Components[i].Containers[j].MemoryLimits, container.MemoryLimits)
+			}
+		}
+		for key, val := range component.Config {
+			if k.Components[i].Config[key] != val {
+				t.Errorf("unexpected Component.Config %s=%s after convertComponentsToVlabs conversion, expected %s=%s", key, k.Components[i].Config[key], key, val)
+			}
+		}
+		for key, val := range k.Components[i].Config {
+			if component.Config[key] != val {
+				t.Errorf("unexpected Component.Config %s=%s after convertComponentsToVlabs conversion, expected %s=%s", key, component.Config[key], key, val)
+			}
+		}
 	}
 }

@@ -89,11 +89,11 @@ const (
 
 var (
 	// NetworkPluginValues holds the valid values for network plugin implementation
-	NetworkPluginValues = [...]string{"", "kubenet", "azure", NetworkPluginCilium, "flannel"}
+	NetworkPluginValues = [...]string{"", "kubenet", "azure", NetworkPluginCilium, NetworkPluginAntrea, "flannel"}
 
 	// NetworkPolicyValues holds the valid values for a network policy
 	// "azure" and "none" are there for backwards-compatibility
-	NetworkPolicyValues = [...]string{"", "calico", NetworkPolicyCilium, "azure", "none"}
+	NetworkPolicyValues = [...]string{"", "calico", NetworkPolicyCilium, NetworkPolicyAntrea, "azure", "none"}
 
 	// ContainerRuntimeValues holds the valid values for container runtimes
 	ContainerRuntimeValues = [...]string{"", Docker, KataContainers, Containerd}
@@ -103,6 +103,9 @@ var (
 
 	// DependenciesLocationValues holds the valid values for dependencies location
 	DependenciesLocationValues = []DependenciesLocation{"", AzureStackDependenciesLocationPublic, AzureStackDependenciesLocationChina, AzureStackDependenciesLocationGerman, AzureStackDependenciesLocationUSGovernment}
+
+	// NetworkModeValues holds the valid values for network mode implementation for cni
+	NetworkModeValues = [...]string{"", NetworkModeBridge, NetworkModeTransparent}
 )
 
 // Kubernetes configuration
@@ -123,6 +126,16 @@ const (
 	NetworkPolicyCilium = "cilium"
 	// NetworkPluginCilium is the string expression for cilium network policy config option
 	NetworkPluginCilium = NetworkPolicyCilium
+	// NetworkPolicyAntrea is the string expression for antrea network policy config option
+	NetworkPolicyAntrea = "antrea"
+	// NetworkPluginAntrea is the string expression for antrea network plugin config option
+	NetworkPluginAntrea = NetworkPolicyAntrea
+	// NetworkPluginFlannel is the string expression for flannel network plugin config option
+	NetworkPluginFlannel = "flannel"
+	// NetworkModeBridge is the string expression for bridge network mode config option
+	NetworkModeBridge = "bridge"
+	// NetworkModeTransparent is the string expression for transparent network mode config option
+	NetworkModeTransparent = "transparent"
 )
 
 const (
@@ -169,3 +182,11 @@ const BasicLoadBalancerSku = "Basic"
 
 // StandardLoadBalancerSku is the string const for Azure Standard Load Balancer
 const StandardLoadBalancerSku = "Standard"
+
+// addons consts
+const (
+	// AddonModeEnsureExists
+	AddonModeEnsureExists = "EnsureExists"
+	// AddonModeReconcile
+	AddonModeReconcile = "Reconcile"
+)

@@ -8,9 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/go-autorest/autorest/to"
+
 	"github.com/Azure/aks-engine/pkg/api/common"
 	"github.com/Azure/aks-engine/pkg/helpers"
-	"github.com/Azure/go-autorest/autorest/to"
 )
 
 func TestKubeletConfigDefaults(t *testing.T) {
@@ -22,6 +23,7 @@ func TestKubeletConfigDefaults(t *testing.T) {
 	winProfile.OSType = Windows
 	cs.Properties.AgentPoolProfiles = append(cs.Properties.AgentPoolProfiles, winProfile)
 	cs.setKubeletConfig(false)
+	k8sComponentsByVersionMap := GetK8sComponentsByVersionMap(&KubernetesConfig{KubernetesImageBaseType: common.KubernetesImageBaseTypeGCR})
 	kubeletConfig := cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
 	expected := map[string]string{
 		"--address":                           "0.0.0.0",
@@ -46,15 +48,15 @@ func TestKubeletConfigDefaults(t *testing.T) {
 		"--kubeconfig":                        "/var/lib/kubelet/kubeconfig",
 		"--max-pods":                          strconv.Itoa(DefaultKubernetesMaxPods),
 		"--network-plugin":                    NetworkPluginKubenet,
-		"--node-status-update-frequency":      K8sComponentsByVersionMap[cs.Properties.OrchestratorProfile.OrchestratorVersion]["nodestatusfreq"],
-		"--non-masquerade-cidr":               DefaultKubernetesSubnet,
+		"--node-status-update-frequency":      k8sComponentsByVersionMap[cs.Properties.OrchestratorProfile.OrchestratorVersion]["nodestatusfreq"],
+		"--non-masquerade-cidr":               DefaultNonMasqueradeCIDR,
 		"--pod-manifest-path":                 "/etc/kubernetes/manifests",
-		"--pod-infra-container-image":         cs.Properties.OrchestratorProfile.KubernetesConfig.MCRKubernetesImageBase + K8sComponentsByVersionMap[cs.Properties.OrchestratorProfile.OrchestratorVersion]["pause"],
+		"--pod-infra-container-image":         cs.Properties.OrchestratorProfile.KubernetesConfig.MCRKubernetesImageBase + k8sComponentsByVersionMap[cs.Properties.OrchestratorProfile.OrchestratorVersion][common.PauseComponentName],
 		"--pod-max-pids":                      strconv.Itoa(DefaultKubeletPodMaxPIDs),
 		"--protect-kernel-defaults":           "true",
 		"--rotate-certificates":               "true",
 		"--streaming-connection-idle-timeout": "4h",
-		"--feature-gates":                     "PodPriority=true,RotateKubeletServerCertificate=true",
+		"--feature-gates":                     "RotateKubeletServerCertificate=true",
 		"--tls-cipher-suites":                 TLSStrongCipherSuitesKubelet,
 		"--tls-cert-file":                     "/etc/kubernetes/certs/kubeletserver.crt",
 		"--tls-private-key-file":              "/etc/kubernetes/certs/kubeletserver.key",
@@ -79,6 +81,7 @@ func TestKubeletConfigDefaults(t *testing.T) {
 				key, val, expected[key])
 		}
 	}
+
 	windowsProfileKubeletConfig := cs.Properties.AgentPoolProfiles[1].KubernetesConfig.KubeletConfig
 	expected["--azure-container-registry-config"] = "c:\\k\\azure.json"
 	expected["--pod-infra-container-image"] = "kubletwin/pause"
@@ -103,6 +106,25 @@ func TestKubeletConfigDefaults(t *testing.T) {
 		}
 	}
 
+	cs = CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, common.KubernetesDefaultRelease, "", false, false), 3, 2, false)
+	// check when ip-masq-agent is explicitly disabled in kubernetes config
+	cs.Properties.OrchestratorProfile.KubernetesConfig.Addons = []KubernetesAddon{
+		{
+			Name:    common.IPMASQAgentAddonName,
+			Enabled: to.BoolPtr(false),
+		},
+	}
+
+	cs.setKubeletConfig(false)
+	k := cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
+
+	for key, val := range map[string]string{"--non-masquerade-cidr": DefaultKubernetesSubnet} {
+		if k[key] != val {
+			t.Fatalf("got unexpected kubelet config value for %s: %s, expected %s",
+				key, k[key], val)
+		}
+	}
+
 	cs = CreateMockContainerService("testcluster", "1.8.6", 3, 2, false)
 	// TODO test all default overrides
 	overrideVal := "/etc/override"
@@ -110,7 +132,7 @@ func TestKubeletConfigDefaults(t *testing.T) {
 		"--azure-container-registry-config": overrideVal,
 	}
 	cs.setKubeletConfig(false)
-	k := cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
+	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
 	for key, val := range map[string]string{"--azure-container-registry-config": overrideVal} {
 		if k[key] != val {
 			t.Fatalf("got unexpected kubelet config value for %s: %s, expected %s",
@@ -132,7 +154,7 @@ func TestKubeletConfigDefaults(t *testing.T) {
 }
 
 func TestKubeletConfigDefaultsRemovals(t *testing.T) {
-	cs := CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, "1.12", "", false, false), 3, 2, false)
+	cs := CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, "1.13", "", false, false), 3, 2, false)
 	poolProfile := &AgentPoolProfile{}
 	poolProfile.Count = 1
 	poolProfile.Name = "agentpool2"
@@ -411,7 +433,7 @@ func TestKubeletHostedMasterIPMasqAgentDisabled(t *testing.T) {
 	cs.Properties.OrchestratorProfile.KubernetesConfig.ClusterSubnet = subnet
 	cs.Properties.OrchestratorProfile.KubernetesConfig.Addons = []KubernetesAddon{
 		{
-			Name:    IPMASQAgentAddonName,
+			Name:    common.IPMASQAgentAddonName,
 			Enabled: to.BoolPtr(true),
 		},
 	}
@@ -431,7 +453,7 @@ func TestKubeletHostedMasterIPMasqAgentDisabled(t *testing.T) {
 	cs.Properties.OrchestratorProfile.KubernetesConfig.ClusterSubnet = subnet
 	cs.Properties.OrchestratorProfile.KubernetesConfig.Addons = []KubernetesAddon{
 		{
-			Name:    IPMASQAgentAddonName,
+			Name:    common.IPMASQAgentAddonName,
 			Enabled: to.BoolPtr(true),
 		},
 	}
@@ -447,7 +469,7 @@ func TestKubeletHostedMasterIPMasqAgentDisabled(t *testing.T) {
 	cs.Properties.OrchestratorProfile.KubernetesConfig.ClusterSubnet = subnet
 	cs.Properties.OrchestratorProfile.KubernetesConfig.Addons = []KubernetesAddon{
 		{
-			Name:    IPMASQAgentAddonName,
+			Name:    common.IPMASQAgentAddonName,
 			Enabled: to.BoolPtr(true),
 		},
 	}
@@ -467,7 +489,7 @@ func TestKubeletIPMasqAgentEnabledOrDisabled(t *testing.T) {
 	cs.Properties.OrchestratorProfile.KubernetesConfig = &KubernetesConfig{
 		Addons: []KubernetesAddon{
 			{
-				Name:    IPMASQAgentAddonName,
+				Name:    common.IPMASQAgentAddonName,
 				Enabled: &b,
 			},
 		},
@@ -486,12 +508,21 @@ func TestKubeletIPMasqAgentEnabledOrDisabled(t *testing.T) {
 	cs.Properties.OrchestratorProfile.KubernetesConfig = &KubernetesConfig{
 		Addons: []KubernetesAddon{
 			{
-				Name:    IPMASQAgentAddonName,
+				Name:    common.IPMASQAgentAddonName,
 				Enabled: &b,
 			},
 		},
 	}
 	cs.Properties.OrchestratorProfile.KubernetesConfig.ClusterSubnet = subnet
+	cs.setKubeletConfig(false)
+	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
+	if k["--non-masquerade-cidr"] != DefaultNonMasqueradeCIDR {
+		t.Fatalf("got unexpected '--non-masquerade-cidr' kubelet config value %s, the expected value is %s",
+			k["--non-masquerade-cidr"], DefaultNonMasqueradeCIDR)
+	}
+
+	// No ip-masq-agent addon configuration specified, --non-masquerade-cidr should be 0.0.0.0/0
+	cs = CreateMockContainerService("testcluster", defaultTestClusterVer, 3, 2, false)
 	cs.setKubeletConfig(false)
 	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
 	if k["--non-masquerade-cidr"] != DefaultNonMasqueradeCIDR {
@@ -704,8 +735,8 @@ func TestKubeletRotateCertificates(t *testing.T) {
 			defaultTestClusterVer, k["--rotate-certificates"])
 	}
 
-	// Test 1.11
-	cs = CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, "1.11", "", false, false), 3, 2, false)
+	// Test 1.14
+	cs = CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, "1.14", "", false, false), 3, 2, false)
 	cs.setKubeletConfig(false)
 	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
 	if k["--rotate-certificates"] != "true" {
@@ -713,8 +744,8 @@ func TestKubeletRotateCertificates(t *testing.T) {
 			defaultTestClusterVer, k["--rotate-certificates"])
 	}
 
-	// Test 1.14
-	cs = CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, "1.14", "", false, false), 3, 2, false)
+	// Test 1.16
+	cs = CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, "1.16", "", false, false), 3, 2, false)
 	cs.setKubeletConfig(false)
 	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
 	if k["--rotate-certificates"] != "true" {
@@ -743,29 +774,20 @@ func TestKubeletConfigDefaultFeatureGates(t *testing.T) {
 			k["--feature-gates"])
 	}
 
-	// test 1.8
-	cs = CreateMockContainerService("testcluster", "1.8.15", 3, 2, false)
-	cs.setKubeletConfig(false)
-	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
-	if k["--feature-gates"] != "PodPriority=true" {
-		t.Fatalf("got unexpected '--feature-gates' kubelet config value for \"--feature-gates\": \"\": %s",
-			k["--feature-gates"])
-	}
-
-	// test 1.11
-	cs = CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, "1.11", "", false, false), 3, 2, false)
-	cs.setKubeletConfig(false)
-	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
-	if k["--feature-gates"] != "PodPriority=true,RotateKubeletServerCertificate=true" {
-		t.Fatalf("got unexpected '--feature-gates' kubelet config value for \"--feature-gates\": \"\": %s",
-			k["--feature-gates"])
-	}
-
 	// test 1.14
 	cs = CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, "1.14", "", false, false), 3, 2, false)
 	cs.setKubeletConfig(false)
 	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
-	if k["--feature-gates"] != "PodPriority=true,RotateKubeletServerCertificate=true" {
+	if k["--feature-gates"] != "RotateKubeletServerCertificate=true" {
+		t.Fatalf("got unexpected '--feature-gates' kubelet config value for \"--feature-gates\": \"\": %s",
+			k["--feature-gates"])
+	}
+
+	// test 1.16
+	cs = CreateMockContainerService("testcluster", common.RationalizeReleaseAndVersion(Kubernetes, "1.16", "", false, false), 3, 2, false)
+	cs.setKubeletConfig(false)
+	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
+	if k["--feature-gates"] != "RotateKubeletServerCertificate=true" {
 		t.Fatalf("got unexpected '--feature-gates' kubelet config value for \"--feature-gates\": \"\": %s",
 			k["--feature-gates"])
 	}
@@ -775,7 +797,7 @@ func TestKubeletConfigDefaultFeatureGates(t *testing.T) {
 	k = cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
 	k["--feature-gates"] = "DynamicKubeletConfig=true"
 	cs.setKubeletConfig(false)
-	if k["--feature-gates"] != "DynamicKubeletConfig=true,PodPriority=true,RotateKubeletServerCertificate=true" {
+	if k["--feature-gates"] != "DynamicKubeletConfig=true,RotateKubeletServerCertificate=true" {
 		t.Fatalf("got unexpected '--feature-gates' kubelet config value for \"--feature-gates\": \"\": %s",
 			k["--feature-gates"])
 	}
@@ -783,7 +805,7 @@ func TestKubeletConfigDefaultFeatureGates(t *testing.T) {
 
 func TestKubeletStrongCipherSuites(t *testing.T) {
 	// Test allowed versions
-	for _, version := range []string{"1.10.0", "1.11.0", "1.12.0", "1.13.0", "1.14.0"} {
+	for _, version := range []string{"1.13.0", "1.14.0"} {
 		cs := CreateMockContainerService("testcluster", version, 3, 2, false)
 		cs.setKubeletConfig(false)
 		k := cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
@@ -793,18 +815,9 @@ func TestKubeletStrongCipherSuites(t *testing.T) {
 		}
 	}
 
-	// Validate that 1.9.0 doesn't include --tls-cipher-suites at all
-	cs := CreateMockContainerService("testcluster", "1.9.0", 3, 2, false)
-	cs.setKubeletConfig(false)
-	k := cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig
-	if _, ok := k["--tls-cipher-suites"]; ok {
-		t.Fatalf("got a value for '--tls-cipher-suites' kubelet config, which is not enabled in versions of Kubernetes prior to 1.10: %s",
-			k["--tls-cipher-suites"])
-	}
-
 	allSuites := "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_RC4_128_SHA,TLS_RSA_WITH_3DES_EDE_CBC_SHA,TLS_RSA_WITH_AES_128_CBC_SHA,TLS_RSA_WITH_AES_128_CBC_SHA256,TLS_RSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_256_CBC_SHA,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_RC4_128_SHA"
 	// Test user-override
-	for _, version := range []string{"1.10.0", "1.11.0", "1.12.0", "1.13.0", "1.14.0"} {
+	for _, version := range []string{"1.13.0", "1.14.0"} {
 		cs := CreateMockContainerService("testcluster", version, 3, 2, false)
 		cs.Properties.OrchestratorProfile.KubernetesConfig.KubeletConfig = map[string]string{
 			"--tls-cipher-suites": allSuites,

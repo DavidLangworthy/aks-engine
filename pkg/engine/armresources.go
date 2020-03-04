@@ -7,7 +7,8 @@ import (
 	"fmt"
 
 	"github.com/Azure/aks-engine/pkg/api"
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/aks-engine/pkg/api/common"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 	"github.com/Azure/go-autorest/autorest/to"
 )
 
@@ -46,13 +47,18 @@ func GenerateARMResources(cs *api.ContainerService) []interface{} {
 		armResources = append(armResources, userAssignedID, msiRoleAssignment)
 	}
 
-	if !cs.Properties.OrchestratorProfile.IsPrivateCluster() &&
+	// Create the Standard Load Balancer resource spec, so long as:
+	// - we are not in an AKS template generation flow
+	// - there are no node pools configured with LoadBalancerBackendAddressPoolIDs
+	//    - i.e., user-provided LoadBalancerBackendAddressPoolIDs is not compatible w/ this Standard LB spec,
+	//      which assumes *all vms in all node pools* as backend pool members
+	if cs.Properties.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == api.StandardLoadBalancerSku &&
 		!isHostedMaster &&
-		!cs.Properties.AnyAgentHasLoadBalancerBackendAddressPoolIDs() &&
-		cs.Properties.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == api.StandardLoadBalancerSku {
+		!cs.Properties.AnyAgentHasLoadBalancerBackendAddressPoolIDs() {
 		isForMaster := false
-		publicIPAddress := CreatePublicIPAddress(isForMaster)
-		loadBalancer := CreateAgentLoadBalancer(cs.Properties, true)
+		includeDNS := false
+		publicIPAddress := CreatePublicIPAddress(isForMaster, includeDNS)
+		loadBalancer := CreateStandardLoadBalancerForNodePools(cs.Properties, true)
 		armResources = append(armResources, publicIPAddress, loadBalancer)
 	}
 
@@ -105,7 +111,7 @@ func GenerateARMResources(cs *api.ContainerService) []interface{} {
 		armResources = append(armResources, masterResources...)
 	}
 
-	if cs.Properties.OrchestratorProfile.KubernetesConfig.IsAddonEnabled(AppGwIngressAddonName) {
+	if cs.Properties.OrchestratorProfile.KubernetesConfig.IsAddonEnabled(common.AppGwIngressAddonName) {
 		armResources = append(armResources, createAppGwPublicIPAddress())
 		armResources = append(armResources, createAppGwUserAssignedIdentities())
 		armResources = append(armResources, createApplicationGateway(cs.Properties))

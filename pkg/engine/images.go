@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/Azure/aks-engine/pkg/api"
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 	"github.com/Azure/go-autorest/autorest/to"
 )
 
@@ -59,6 +59,8 @@ func createWindowsImage(profile *api.AgentPoolProfile) ImageARM {
 						StorageAccountType: compute.StorageAccountTypesStandardLRS,
 					},
 				},
+				// TODO: Expose Hyper-V generation for VHD URL refs in apimodel
+				HyperVGeneration: compute.HyperVGenerationTypesV1,
 			},
 		},
 	}

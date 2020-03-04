@@ -16,11 +16,12 @@ import (
 
 	"github.com/Azure/go-autorest/autorest/to"
 
-	"github.com/Azure/aks-engine/pkg/api/common"
-	"github.com/Azure/aks-engine/pkg/helpers"
 	"github.com/blang/semver"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/Azure/aks-engine/pkg/api/common"
+	"github.com/Azure/aks-engine/pkg/helpers"
 )
 
 // DistroValues is a list of currently supported distros
@@ -48,27 +49,16 @@ func (cs *ContainerService) SetPropertiesDefaults(params PropertiesDefaultsParam
 		}
 	}
 
-	cs.setOrchestratorDefaults(params.IsUpgrade, params.IsScale)
-
-	cloudName := cs.GetCloudSpecConfig().CloudName
-
 	// Set master profile defaults if this cluster configuration includes master node(s)
 	if cs.Properties.MasterProfile != nil {
-		properties.setMasterProfileDefaults(params.IsUpgrade, params.IsScale, cloudName)
-	}
-	// Set VMSS Defaults for Masters
-	if cs.Properties.MasterProfile != nil && cs.Properties.MasterProfile.IsVirtualMachineScaleSets() {
-		properties.setVMSSDefaultsForMasters()
+		properties.setMasterProfileDefaults(params.IsUpgrade)
 	}
 
-	properties.setAgentProfileDefaults(params.IsUpgrade, params.IsScale, cloudName)
+	properties.setAgentProfileDefaults(params.IsUpgrade, params.IsScale)
 
 	properties.setStorageDefaults()
+	cs.setOrchestratorDefaults(params.IsUpgrade, params.IsScale)
 	properties.setExtensionDefaults()
-	// Set VMSS Defaults for Agents
-	if cs.Properties.HasVMSSAgentPool() {
-		properties.setVMSSDefaultsForAgents()
-	}
 
 	// Set hosted master profile defaults if this cluster configuration has a hosted control plane
 	if cs.Properties.HostedMasterProfile != nil {
@@ -78,6 +68,8 @@ func (cs *ContainerService) SetPropertiesDefaults(params PropertiesDefaultsParam
 	if cs.Properties.WindowsProfile != nil {
 		properties.setWindowsProfileDefaults(params.IsUpgrade, params.IsScale)
 	}
+
+	properties.setTelemetryProfileDefaults()
 
 	certsGenerated, _, e := cs.SetDefaultCerts(DefaultCertParams{
 		PkiKeySize: params.PkiKeySize,
@@ -127,10 +119,34 @@ func (cs *ContainerService) setOrchestratorDefaults(isUpgrade, isScale bool) {
 			}
 		case NetworkPolicyCilium:
 			o.KubernetesConfig.NetworkPlugin = NetworkPluginCilium
+		case NetworkPolicyAntrea:
+			o.KubernetesConfig.NetworkPlugin = NetworkPluginAntrea
+		}
+
+		if a.IsAzureStackCloud() {
+			// Azure Stack's custom hyperkube image is now hosted along with MCR images.
+			// Forcing KubernetesImageBase/KubernetesImageBaseType.
+			mcrKubernetesImageBase := cloudSpecConfig.KubernetesSpecConfig.MCRKubernetesImageBase
+			if !strings.EqualFold(o.KubernetesConfig.KubernetesImageBase, mcrKubernetesImageBase) {
+				log.Warnf("apimodel: orchestratorProfile.kubernetesConfig.kubernetesImageBase forced to \"%s\"\n", mcrKubernetesImageBase)
+			}
+			o.KubernetesConfig.KubernetesImageBase = cloudSpecConfig.KubernetesSpecConfig.MCRKubernetesImageBase
+			if !strings.EqualFold(o.KubernetesConfig.KubernetesImageBaseType, common.KubernetesImageBaseTypeMCR) {
+				log.Warnf("apimodel: orchestratorProfile.kubernetesConfig.KubernetesImageBaseType forced to \"%s\"\n", common.KubernetesImageBaseTypeMCR)
+			}
+			o.KubernetesConfig.KubernetesImageBaseType = common.KubernetesImageBaseTypeMCR
 		}
 
 		if o.KubernetesConfig.KubernetesImageBase == "" {
 			o.KubernetesConfig.KubernetesImageBase = cloudSpecConfig.KubernetesSpecConfig.KubernetesImageBase
+		} else {
+			if o.KubernetesConfig.KubernetesImageBase[len(o.KubernetesConfig.KubernetesImageBase)-1:] != "/" {
+				o.KubernetesConfig.KubernetesImageBase += "/"
+			}
+		}
+
+		if o.KubernetesConfig.KubernetesImageBaseType == "" {
+			o.KubernetesConfig.KubernetesImageBaseType = common.KubernetesImageBaseTypeGCR
 		}
 
 		if o.KubernetesConfig.MCRKubernetesImageBase == "" {
@@ -147,7 +163,6 @@ func (cs *ContainerService) setOrchestratorDefaults(isUpgrade, isScale bool) {
 					o.KubernetesConfig.EtcdVersion = DefaultEtcdVersion
 				}
 			}
-
 		}
 
 		if a.HasWindows() {
@@ -156,7 +171,11 @@ func (cs *ContainerService) setOrchestratorDefaults(isUpgrade, isScale bool) {
 			}
 		} else {
 			if o.KubernetesConfig.NetworkPlugin == "" {
-				o.KubernetesConfig.NetworkPlugin = DefaultNetworkPlugin
+				if o.KubernetesConfig.IsAddonEnabled(common.FlannelAddonName) {
+					o.KubernetesConfig.NetworkPlugin = NetworkPluginFlannel
+				} else {
+					o.KubernetesConfig.NetworkPlugin = DefaultNetworkPlugin
+				}
 			}
 		}
 		if o.KubernetesConfig.ContainerRuntime == "" {
@@ -317,10 +336,7 @@ func (cs *ContainerService) setOrchestratorDefaults(isUpgrade, isScale bool) {
 		}
 
 		if a.OrchestratorProfile.KubernetesConfig.IsRBACEnabled() {
-			if common.IsKubernetesVersionGe(o.OrchestratorVersion, "1.9.0") {
-				// TODO make EnableAggregatedAPIs a pointer to bool so that a user can opt out of it
-				a.OrchestratorProfile.KubernetesConfig.EnableAggregatedAPIs = true
-			}
+			a.OrchestratorProfile.KubernetesConfig.EnableAggregatedAPIs = true
 		} else if isUpdate && a.OrchestratorProfile.KubernetesConfig.EnableAggregatedAPIs {
 			// Upgrade scenario:
 			// We need to force set EnableAggregatedAPIs to false if RBAC was previously disabled
@@ -339,22 +355,22 @@ func (cs *ContainerService) setOrchestratorDefaults(isUpgrade, isScale bool) {
 			}
 		}
 
+		if a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == "" {
+			if a.HasAvailabilityZones() {
+				a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku = StandardLoadBalancerSku
+			} else {
+				a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku = DefaultLoadBalancerSku
+			}
+		}
+
 		if strings.ToLower(a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku) == strings.ToLower(BasicLoadBalancerSku) {
 			a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku = BasicLoadBalancerSku
 		} else if strings.ToLower(a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku) == strings.ToLower(StandardLoadBalancerSku) {
 			a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku = StandardLoadBalancerSku
 		}
 
-		if !a.HasAvailabilityZones() && a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == "" {
-			a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku = DefaultLoadBalancerSku
-		}
-
-		if common.IsKubernetesVersionGe(a.OrchestratorProfile.OrchestratorVersion, "1.11.0") && a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == StandardLoadBalancerSku && a.OrchestratorProfile.KubernetesConfig.ExcludeMasterFromStandardLB == nil {
+		if a.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == StandardLoadBalancerSku && a.OrchestratorProfile.KubernetesConfig.ExcludeMasterFromStandardLB == nil {
 			a.OrchestratorProfile.KubernetesConfig.ExcludeMasterFromStandardLB = to.BoolPtr(DefaultExcludeMasterFromStandardLB)
-		}
-
-		if common.IsKubernetesVersionGe(a.OrchestratorProfile.OrchestratorVersion, "1.15.0-beta.1") {
-			a.OrchestratorProfile.KubernetesConfig.EnablePodSecurityPolicy = to.BoolPtr(true)
 		}
 
 		if a.OrchestratorProfile.IsAzureCNI() {
@@ -376,13 +392,153 @@ func (cs *ContainerService) setOrchestratorDefaults(isUpgrade, isScale bool) {
 			a.OrchestratorProfile.KubernetesConfig.OutboundRuleIdleTimeoutInMinutes = DefaultOutboundRuleIdleTimeoutInMinutes
 		}
 
-		// First, Configure addons
-		cs.setAddonsConfig(isUpdate)
-		// Defaults enforcement flows below inherit from addons configuration,
-		// so it's critical to enforce default addons configuration first
+		if o.KubernetesConfig.LoadBalancerSku == StandardLoadBalancerSku {
+			if o.KubernetesConfig.CloudProviderDisableOutboundSNAT == nil {
+				o.KubernetesConfig.CloudProviderDisableOutboundSNAT = to.BoolPtr(false)
+			}
+		} else {
+			// CloudProviderDisableOutboundSNAT is only valid in the context of Standard LB, statically set to false if not Standard LB
+			o.KubernetesConfig.CloudProviderDisableOutboundSNAT = to.BoolPtr(false)
+		}
+
+		// Master-specific defaults that depend upon OrchestratorProfile defaults
+		if cs.Properties.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == StandardLoadBalancerSku {
+			cs.Properties.OrchestratorProfile.KubernetesConfig.ExcludeMasterFromStandardLB = to.BoolPtr(DefaultExcludeMasterFromStandardLB)
+		}
+		if cs.Properties.MasterProfile != nil {
+			if !cs.Properties.MasterProfile.IsCustomVNET() {
+				if cs.Properties.OrchestratorProfile.IsAzureCNI() {
+					// When VNET integration is enabled, all masters, agents and pods share the same large subnet.
+					cs.Properties.MasterProfile.Subnet = cs.Properties.OrchestratorProfile.KubernetesConfig.ClusterSubnet
+					// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
+					if !isUpgrade || len(cs.Properties.MasterProfile.FirstConsecutiveStaticIP) == 0 {
+						if cs.Properties.MasterProfile.IsVirtualMachineScaleSets() {
+							cs.Properties.MasterProfile.FirstConsecutiveStaticIP = DefaultFirstConsecutiveKubernetesStaticIPVMSS
+							cs.Properties.MasterProfile.Subnet = DefaultKubernetesMasterSubnet
+							cs.Properties.MasterProfile.AgentSubnet = DefaultKubernetesAgentSubnetVMSS
+						} else {
+							cs.Properties.MasterProfile.FirstConsecutiveStaticIP = cs.Properties.MasterProfile.GetFirstConsecutiveStaticIPAddress(cs.Properties.MasterProfile.Subnet)
+						}
+					}
+				} else {
+					cs.Properties.MasterProfile.Subnet = DefaultKubernetesMasterSubnet
+					cs.Properties.MasterProfile.SubnetIPv6 = DefaultKubernetesMasterSubnetIPv6
+					// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
+					if !isUpgrade || len(cs.Properties.MasterProfile.FirstConsecutiveStaticIP) == 0 {
+						if cs.Properties.MasterProfile.IsVirtualMachineScaleSets() {
+							cs.Properties.MasterProfile.FirstConsecutiveStaticIP = DefaultFirstConsecutiveKubernetesStaticIPVMSS
+							cs.Properties.MasterProfile.AgentSubnet = DefaultKubernetesAgentSubnetVMSS
+						} else {
+							cs.Properties.MasterProfile.FirstConsecutiveStaticIP = DefaultFirstConsecutiveKubernetesStaticIP
+						}
+					}
+				}
+			}
+
+			// Distro assignment for masterProfile
+			if cs.Properties.MasterProfile.Distro == "" && cs.Properties.MasterProfile.ImageRef == nil {
+				if cs.Properties.OrchestratorProfile.IsKubernetes() && cs.Properties.OrchestratorProfile.KubernetesConfig.CustomHyperkubeImage == "" {
+					cs.Properties.MasterProfile.Distro = AKSUbuntu1604
+				} else {
+					cs.Properties.MasterProfile.Distro = Ubuntu
+				}
+			} else if cs.Properties.OrchestratorProfile.IsKubernetes() && (isUpgrade || isScale) {
+				if cs.Properties.MasterProfile.Distro == AKSDockerEngine || cs.Properties.MasterProfile.Distro == AKS1604Deprecated {
+					cs.Properties.MasterProfile.Distro = AKSUbuntu1604
+				} else if cs.Properties.MasterProfile.Distro == AKS1804Deprecated {
+					cs.Properties.MasterProfile.Distro = AKSUbuntu1804
+				}
+			}
+			// The AKS Distro is not available in Azure German Cloud.
+			if cloudSpecConfig.CloudName == AzureGermanCloud {
+				cs.Properties.MasterProfile.Distro = Ubuntu
+			}
+		}
+
+		// Pool-specific defaults that depend upon OrchestratorProfile defaults
+		for _, profile := range cs.Properties.AgentPoolProfiles {
+			if cs.Properties.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == StandardLoadBalancerSku {
+				cs.Properties.OrchestratorProfile.KubernetesConfig.ExcludeMasterFromStandardLB = to.BoolPtr(DefaultExcludeMasterFromStandardLB)
+			}
+			// configure the subnets if not in custom VNET
+			if cs.Properties.MasterProfile != nil && !cs.Properties.MasterProfile.IsCustomVNET() {
+				subnetCounter := 0
+				for _, profile := range cs.Properties.AgentPoolProfiles {
+					if !cs.Properties.MasterProfile.IsVirtualMachineScaleSets() {
+						profile.Subnet = cs.Properties.MasterProfile.Subnet
+					}
+					if cs.Properties.OrchestratorProfile.OrchestratorType == Kubernetes {
+						if !cs.Properties.MasterProfile.IsVirtualMachineScaleSets() {
+							profile.Subnet = cs.Properties.MasterProfile.Subnet
+						}
+					} else {
+						profile.Subnet = fmt.Sprintf(DefaultAgentSubnetTemplate, subnetCounter)
+					}
+					subnetCounter++
+				}
+			}
+			// Distro assignment for pools
+			if profile.OSType != Windows {
+				if profile.Distro == "" && profile.ImageRef == nil {
+					if cs.Properties.OrchestratorProfile.IsKubernetes() && cs.Properties.OrchestratorProfile.KubernetesConfig != nil && cs.Properties.OrchestratorProfile.KubernetesConfig.CustomHyperkubeImage == "" {
+						if profile.OSDiskSizeGB != 0 && profile.OSDiskSizeGB < VHDDiskSizeAKS {
+							profile.Distro = Ubuntu
+						} else {
+							profile.Distro = AKSUbuntu1604
+						}
+					} else {
+						profile.Distro = Ubuntu
+					}
+					// Ensure deprecated distros are overridden
+					// Previous versions of aks-engine required the docker-engine distro for N series vms,
+					// so we need to hard override it in order to produce a working cluster in upgrade/scale contexts.
+				} else if cs.Properties.OrchestratorProfile.IsKubernetes() && (isUpgrade || isScale) {
+					if profile.Distro == AKSDockerEngine || profile.Distro == AKS1604Deprecated {
+						profile.Distro = AKSUbuntu1604
+					} else if profile.Distro == AKS1804Deprecated {
+						profile.Distro = AKSUbuntu1804
+					}
+				}
+				// The AKS Distro is not available in Azure German Cloud.
+				if cloudSpecConfig.CloudName == AzureGermanCloud {
+					profile.Distro = Ubuntu
+				}
+			}
+		}
 
 		// Configure kubelet
 		cs.setKubeletConfig(isUpgrade)
+
+		// Configure addons
+		cs.setAddonsConfig(isUpgrade)
+
+		// Master-specific defaults that depend upon kubelet defaults
+		// Set the default number of IP addresses allocated for masters.
+		if cs.Properties.MasterProfile != nil {
+			if cs.Properties.MasterProfile.IPAddressCount == 0 {
+				// Allocate one IP address for the node.
+				cs.Properties.MasterProfile.IPAddressCount = 1
+				// Allocate IP addresses for pods if VNET integration is enabled.
+				if cs.Properties.OrchestratorProfile.IsAzureCNI() {
+					masterMaxPods, _ := strconv.Atoi(cs.Properties.MasterProfile.KubernetesConfig.KubeletConfig["--max-pods"])
+					cs.Properties.MasterProfile.IPAddressCount += masterMaxPods
+				}
+			}
+		}
+		// Pool-specific defaults that depend upon kubelet defaults
+		for _, profile := range cs.Properties.AgentPoolProfiles {
+			// Set the default number of IP addresses allocated for agents.
+			if profile.IPAddressCount == 0 {
+				// Allocate one IP address for the node.
+				profile.IPAddressCount = 1
+				// Allocate IP addresses for pods if VNET integration is enabled.
+				if cs.Properties.OrchestratorProfile.IsAzureCNI() {
+					agentPoolMaxPods, _ := strconv.Atoi(profile.KubernetesConfig.KubeletConfig["--max-pods"])
+					profile.IPAddressCount += agentPoolMaxPods
+				}
+			}
+		}
+
 		// Configure controller-manager
 		cs.setControllerManagerConfig()
 		// Configure cloud-controller-manager
@@ -391,6 +547,8 @@ func (cs *ContainerService) setOrchestratorDefaults(isUpgrade, isScale bool) {
 		cs.setAPIServerConfig()
 		// Configure scheduler
 		cs.setSchedulerConfig()
+		// Configure components
+		cs.setComponentsConfig(isUpgrade)
 
 	case DCOS:
 		if o.DcosConfig == nil {
@@ -404,6 +562,13 @@ func (cs *ContainerService) setOrchestratorDefaults(isUpgrade, isScale bool) {
 			}
 			if len(o.DcosConfig.BootstrapProfile.VMSize) == 0 {
 				o.DcosConfig.BootstrapProfile.VMSize = "Standard_D2s_v3"
+			}
+		}
+		if !cs.Properties.MasterProfile.IsCustomVNET() {
+			if cs.Properties.OrchestratorProfile.DcosConfig != nil && cs.Properties.OrchestratorProfile.DcosConfig.BootstrapProfile != nil {
+				if !isUpgrade || len(cs.Properties.OrchestratorProfile.DcosConfig.BootstrapProfile.StaticIP) == 0 {
+					cs.Properties.OrchestratorProfile.DcosConfig.BootstrapProfile.StaticIP = DefaultDCOSBootstrapStaticIP
+				}
 			}
 		}
 	}
@@ -420,105 +585,15 @@ func (p *Properties) setExtensionDefaults() {
 	}
 }
 
-func (p *Properties) setMasterProfileDefaults(isUpgrade, isScale bool, cloudName string) {
-	if p.MasterProfile.Distro == "" && p.MasterProfile.ImageRef == nil {
-		if p.OrchestratorProfile.IsKubernetes() && p.OrchestratorProfile.KubernetesConfig != nil && p.OrchestratorProfile.KubernetesConfig.CustomHyperkubeImage == "" {
-			p.MasterProfile.Distro = AKSUbuntu1604
-		} else {
-			p.MasterProfile.Distro = Ubuntu
-		}
-	} else if p.OrchestratorProfile.IsKubernetes() && (isUpgrade || isScale) {
-		if p.MasterProfile.Distro == AKSDockerEngine || p.MasterProfile.Distro == AKS1604Deprecated {
-			p.MasterProfile.Distro = AKSUbuntu1604
-		} else if p.MasterProfile.Distro == AKS1804Deprecated {
-			p.MasterProfile.Distro = AKSUbuntu1804
-		}
-	}
-
-	// The AKS Distro is not available in Azure German Cloud.
-	if cloudName == AzureGermanCloud {
-		p.MasterProfile.Distro = Ubuntu
-	}
-
-	// "--protect-kernel-defaults" is only true for VHD based VMs since the base Ubuntu distros don't have a /etc/sysctl.d/60-CIS.conf file.
-	if p.MasterProfile.IsVHDDistro() {
-		if p.MasterProfile.KubernetesConfig == nil {
-			p.MasterProfile.KubernetesConfig = &KubernetesConfig{}
-		}
-		if p.MasterProfile.KubernetesConfig.KubeletConfig == nil {
-			p.MasterProfile.KubernetesConfig.KubeletConfig = map[string]string{}
-		}
-		if _, ok := p.MasterProfile.KubernetesConfig.KubeletConfig["--protect-kernel-defaults"]; !ok {
-			p.MasterProfile.KubernetesConfig.KubeletConfig["--protect-kernel-defaults"] = "true"
-		}
-	}
-	// Override the --resolv-conf kubelet config value for Ubuntu 18.04 after the distro value is set.
-	if p.MasterProfile.IsUbuntu1804() {
-		if p.MasterProfile.KubernetesConfig == nil {
-			p.MasterProfile.KubernetesConfig = &KubernetesConfig{}
-		}
-		if p.MasterProfile.KubernetesConfig.KubeletConfig == nil {
-			p.MasterProfile.KubernetesConfig.KubeletConfig = map[string]string{}
-		}
-		p.MasterProfile.KubernetesConfig.KubeletConfig["--resolv-conf"] = "/run/systemd/resolve/resolv.conf"
-	}
-
+func (p *Properties) setMasterProfileDefaults(isUpgrade bool) {
 	// set default to VMAS for now
-	if len(p.MasterProfile.AvailabilityProfile) == 0 {
+	if p.MasterProfile.AvailabilityProfile == "" {
 		p.MasterProfile.AvailabilityProfile = AvailabilitySet
 	}
 
-	if !p.MasterProfile.IsCustomVNET() {
-		if p.OrchestratorProfile.OrchestratorType == Kubernetes {
-			if p.OrchestratorProfile.IsAzureCNI() {
-				// When VNET integration is enabled, all masters, agents and pods share the same large subnet.
-				p.MasterProfile.Subnet = p.OrchestratorProfile.KubernetesConfig.ClusterSubnet
-				// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
-				if !isUpgrade || len(p.MasterProfile.FirstConsecutiveStaticIP) == 0 {
-					if p.MasterProfile.IsVirtualMachineScaleSets() {
-						p.MasterProfile.FirstConsecutiveStaticIP = DefaultFirstConsecutiveKubernetesStaticIPVMSS
-						p.MasterProfile.Subnet = DefaultKubernetesMasterSubnet
-						p.MasterProfile.AgentSubnet = DefaultKubernetesAgentSubnetVMSS
-					} else {
-						p.MasterProfile.FirstConsecutiveStaticIP = p.MasterProfile.GetFirstConsecutiveStaticIPAddress(p.MasterProfile.Subnet)
-					}
-				}
-			} else {
-				p.MasterProfile.Subnet = DefaultKubernetesMasterSubnet
-				p.MasterProfile.SubnetIPv6 = DefaultKubernetesMasterSubnetIPv6
-				// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
-				if !isUpgrade || len(p.MasterProfile.FirstConsecutiveStaticIP) == 0 {
-					if p.MasterProfile.IsVirtualMachineScaleSets() {
-						p.MasterProfile.FirstConsecutiveStaticIP = DefaultFirstConsecutiveKubernetesStaticIPVMSS
-						p.MasterProfile.AgentSubnet = DefaultKubernetesAgentSubnetVMSS
-					} else {
-						p.MasterProfile.FirstConsecutiveStaticIP = DefaultFirstConsecutiveKubernetesStaticIP
-					}
-				}
-			}
-		} else if p.OrchestratorProfile.OrchestratorType == DCOS {
-			p.MasterProfile.Subnet = DefaultDCOSMasterSubnet
-			// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
-			if !isUpgrade || len(p.MasterProfile.FirstConsecutiveStaticIP) == 0 {
-				p.MasterProfile.FirstConsecutiveStaticIP = DefaultDCOSFirstConsecutiveStaticIP
-			}
-			if p.OrchestratorProfile.DcosConfig != nil && p.OrchestratorProfile.DcosConfig.BootstrapProfile != nil {
-				if !isUpgrade || len(p.OrchestratorProfile.DcosConfig.BootstrapProfile.StaticIP) == 0 {
-					p.OrchestratorProfile.DcosConfig.BootstrapProfile.StaticIP = DefaultDCOSBootstrapStaticIP
-				}
-			}
-		} else if p.HasWindows() {
-			p.MasterProfile.Subnet = DefaultSwarmWindowsMasterSubnet
-			// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
-			if !isUpgrade || len(p.MasterProfile.FirstConsecutiveStaticIP) == 0 {
-				p.MasterProfile.FirstConsecutiveStaticIP = DefaultSwarmWindowsFirstConsecutiveStaticIP
-			}
-		} else {
-			p.MasterProfile.Subnet = DefaultMasterSubnet
-			// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
-			if !isUpgrade || len(p.MasterProfile.FirstConsecutiveStaticIP) == 0 {
-				p.MasterProfile.FirstConsecutiveStaticIP = DefaultFirstConsecutiveStaticIP
-			}
+	if p.MasterProfile.IsVirtualMachineScaleSets() {
+		if p.MasterProfile.SinglePlacementGroup == nil {
+			p.MasterProfile.SinglePlacementGroup = to.BoolPtr(DefaultSinglePlacementGroup)
 		}
 	}
 
@@ -527,16 +602,28 @@ func (p *Properties) setMasterProfileDefaults(isUpgrade, isScale bool, cloudName
 			p.MasterProfile.FirstConsecutiveStaticIP = p.MasterProfile.GetFirstConsecutiveStaticIPAddress(p.MasterProfile.VnetCidr)
 		}
 	}
-	// Set the default number of IP addresses allocated for masters.
-	if p.MasterProfile.IPAddressCount == 0 {
-		// Allocate one IP address for the node.
-		p.MasterProfile.IPAddressCount = 1
 
-		// Allocate IP addresses for pods if VNET integration is enabled.
-		if p.OrchestratorProfile.IsAzureCNI() {
-			if p.OrchestratorProfile.OrchestratorType == Kubernetes {
-				masterMaxPods, _ := strconv.Atoi(p.MasterProfile.KubernetesConfig.KubeletConfig["--max-pods"])
-				p.MasterProfile.IPAddressCount += masterMaxPods
+	if !p.OrchestratorProfile.IsKubernetes() {
+		p.MasterProfile.Distro = Ubuntu
+		if !p.MasterProfile.IsCustomVNET() {
+			if p.OrchestratorProfile.OrchestratorType == DCOS {
+				p.MasterProfile.Subnet = DefaultDCOSMasterSubnet
+				// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
+				if !isUpgrade || len(p.MasterProfile.FirstConsecutiveStaticIP) == 0 {
+					p.MasterProfile.FirstConsecutiveStaticIP = DefaultDCOSFirstConsecutiveStaticIP
+				}
+			} else if p.HasWindows() {
+				p.MasterProfile.Subnet = DefaultSwarmWindowsMasterSubnet
+				// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
+				if !isUpgrade || len(p.MasterProfile.FirstConsecutiveStaticIP) == 0 {
+					p.MasterProfile.FirstConsecutiveStaticIP = DefaultSwarmWindowsFirstConsecutiveStaticIP
+				}
+			} else {
+				p.MasterProfile.Subnet = DefaultMasterSubnet
+				// FirstConsecutiveStaticIP is not reset if it is upgrade and some value already exists
+				if !isUpgrade || len(p.MasterProfile.FirstConsecutiveStaticIP) == 0 {
+					p.MasterProfile.FirstConsecutiveStaticIP = DefaultFirstConsecutiveStaticIP
+				}
 			}
 		}
 	}
@@ -553,56 +640,36 @@ func (p *Properties) setMasterProfileDefaults(isUpgrade, isScale bool, cloudName
 	if p.IsAzureStackCloud() && p.MasterProfile.PlatformFaultDomainCount == nil {
 		p.MasterProfile.PlatformFaultDomainCount = to.IntPtr(DefaultAzureStackFaultDomainCount)
 	}
-}
-
-// setVMSSDefaultsForMasters
-func (p *Properties) setVMSSDefaultsForMasters() {
-	if p.MasterProfile.SinglePlacementGroup == nil {
-		p.MasterProfile.SinglePlacementGroup = to.BoolPtr(DefaultSinglePlacementGroup)
-	}
-	if p.MasterProfile.HasAvailabilityZones() && (p.OrchestratorProfile.KubernetesConfig != nil && p.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == "") {
-		p.OrchestratorProfile.KubernetesConfig.LoadBalancerSku = StandardLoadBalancerSku
-		p.OrchestratorProfile.KubernetesConfig.ExcludeMasterFromStandardLB = to.BoolPtr(DefaultExcludeMasterFromStandardLB)
+	if p.MasterProfile.PlatformUpdateDomainCount == nil {
+		p.MasterProfile.PlatformUpdateDomainCount = to.IntPtr(3)
 	}
 }
 
-// setVMSSDefaultsForAgents
-func (p *Properties) setVMSSDefaultsForAgents() {
+func (p *Properties) setAgentProfileDefaults(isUpgrade, isScale bool) {
 	for _, profile := range p.AgentPoolProfiles {
+		if profile.AvailabilityProfile == "" {
+			profile.AvailabilityProfile = VirtualMachineScaleSets
+		}
 		if profile.AvailabilityProfile == VirtualMachineScaleSets {
+			if profile.ScaleSetEvictionPolicy == "" && (profile.ScaleSetPriority == ScaleSetPriorityLow || profile.ScaleSetPriority == ScaleSetPrioritySpot) {
+				profile.ScaleSetEvictionPolicy = ScaleSetEvictionPolicyDelete
+			}
+
+			if profile.ScaleSetPriority == ScaleSetPrioritySpot && profile.SpotMaxPrice == nil {
+				var maximumValueFlag float64 = -1
+				profile.SpotMaxPrice = &maximumValueFlag
+			}
+
+			if profile.VMSSOverProvisioningEnabled == nil {
+				profile.VMSSOverProvisioningEnabled = to.BoolPtr(DefaultVMSSOverProvisioningEnabled && !isUpgrade && !isScale)
+			}
 			if profile.Count > 100 {
 				profile.SinglePlacementGroup = to.BoolPtr(false)
 			}
 			if profile.SinglePlacementGroup == nil {
 				profile.SinglePlacementGroup = to.BoolPtr(DefaultSinglePlacementGroup)
 			}
-			if profile.HasAvailabilityZones() && (p.OrchestratorProfile.KubernetesConfig != nil && p.OrchestratorProfile.KubernetesConfig.LoadBalancerSku == "") {
-				p.OrchestratorProfile.KubernetesConfig.LoadBalancerSku = StandardLoadBalancerSku
-				p.OrchestratorProfile.KubernetesConfig.ExcludeMasterFromStandardLB = to.BoolPtr(DefaultExcludeMasterFromStandardLB)
-			}
 		}
-
-	}
-}
-
-func (p *Properties) setAgentProfileDefaults(isUpgrade, isScale bool, cloudName string) {
-	// configure the subnets if not in custom VNET
-	if p.MasterProfile != nil && !p.MasterProfile.IsCustomVNET() {
-		subnetCounter := 0
-		for _, profile := range p.AgentPoolProfiles {
-			if p.OrchestratorProfile.OrchestratorType == Kubernetes {
-				if !p.MasterProfile.IsVirtualMachineScaleSets() {
-					profile.Subnet = p.MasterProfile.Subnet
-				}
-			} else {
-				profile.Subnet = fmt.Sprintf(DefaultAgentSubnetTemplate, subnetCounter)
-			}
-
-			subnetCounter++
-		}
-	}
-
-	for _, profile := range p.AgentPoolProfiles {
 		// set default OSType to Linux
 		if profile.OSType == "" {
 			profile.OSType = Linux
@@ -611,6 +678,9 @@ func (p *Properties) setAgentProfileDefaults(isUpgrade, isScale bool, cloudName 
 		// Update default fault domain value for Azure Stack
 		if p.IsAzureStackCloud() && profile.PlatformFaultDomainCount == nil {
 			profile.PlatformFaultDomainCount = to.IntPtr(DefaultAzureStackFaultDomainCount)
+		}
+		if profile.PlatformUpdateDomainCount == nil {
+			profile.PlatformUpdateDomainCount = to.IntPtr(3)
 		}
 
 		// Accelerated Networking is supported on most general purpose and compute-optimized instance sizes with 2 or more vCPUs.
@@ -634,74 +704,8 @@ func (p *Properties) setAgentProfileDefaults(isUpgrade, isScale bool, cloudName 
 			}
 		}
 
-		if profile.VMSSOverProvisioningEnabled == nil {
-			profile.VMSSOverProvisioningEnabled = to.BoolPtr(DefaultVMSSOverProvisioningEnabled && !isUpgrade && !isScale)
-		}
-
 		if profile.AuditDEnabled == nil {
 			profile.AuditDEnabled = to.BoolPtr(DefaultAuditDEnabled && !isUpgrade && !isScale)
-		}
-
-		if profile.OSType != Windows {
-			if profile.Distro == "" && profile.ImageRef == nil {
-				if p.OrchestratorProfile.IsKubernetes() && p.OrchestratorProfile.KubernetesConfig != nil && p.OrchestratorProfile.KubernetesConfig.CustomHyperkubeImage == "" {
-					if profile.OSDiskSizeGB != 0 && profile.OSDiskSizeGB < VHDDiskSizeAKS {
-						profile.Distro = Ubuntu
-					} else {
-						profile.Distro = AKSUbuntu1604
-					}
-				} else {
-					profile.Distro = Ubuntu
-				}
-				// Ensure deprecated distros are overridden
-				// Previous versions of aks-engine required the docker-engine distro for N series vms,
-				// so we need to hard override it in order to produce a working cluster in upgrade/scale contexts.
-			} else if p.OrchestratorProfile.IsKubernetes() && (isUpgrade || isScale) {
-				if profile.Distro == AKSDockerEngine || profile.Distro == AKS1604Deprecated {
-					profile.Distro = AKSUbuntu1604
-				} else if profile.Distro == AKS1804Deprecated {
-					profile.Distro = AKSUbuntu1804
-				}
-			}
-			// The AKS Distro is not available in Azure German Cloud.
-			if cloudName == AzureGermanCloud {
-				profile.Distro = Ubuntu
-			}
-		}
-
-		// "--protect-kernel-defaults" is only true for VHD based VMs since the base Ubuntu distros don't have a /etc/sysctl.d/60-CIS.conf file.
-		if profile.IsVHDDistro() {
-			if profile.KubernetesConfig == nil {
-				profile.KubernetesConfig = &KubernetesConfig{}
-			}
-			if profile.KubernetesConfig.KubeletConfig == nil {
-				profile.KubernetesConfig.KubeletConfig = map[string]string{}
-			}
-			if _, ok := profile.KubernetesConfig.KubeletConfig["--protect-kernel-defaults"]; !ok {
-				profile.KubernetesConfig.KubeletConfig["--protect-kernel-defaults"] = "true"
-			}
-		}
-		// Override the --resolv-conf kubelet config value for Ubuntu 18.04 after the distro value is set.
-		if profile.IsUbuntu1804() {
-			if profile.KubernetesConfig == nil {
-				profile.KubernetesConfig = &KubernetesConfig{}
-			}
-			if profile.KubernetesConfig.KubeletConfig == nil {
-				profile.KubernetesConfig.KubeletConfig = map[string]string{}
-			}
-			profile.KubernetesConfig.KubeletConfig["--resolv-conf"] = "/run/systemd/resolve/resolv.conf"
-		}
-
-		// Set the default number of IP addresses allocated for agents.
-		if profile.IPAddressCount == 0 {
-			// Allocate one IP address for the node.
-			profile.IPAddressCount = 1
-
-			// Allocate IP addresses for pods if VNET integration is enabled.
-			if p.OrchestratorProfile.IsAzureCNI() {
-				agentPoolMaxPods, _ := strconv.Atoi(profile.KubernetesConfig.KubeletConfig["--max-pods"])
-				profile.IPAddressCount += agentPoolMaxPods
-			}
 		}
 
 		if profile.PreserveNodesProperties == nil {
@@ -711,6 +715,10 @@ func (p *Properties) setAgentProfileDefaults(isUpgrade, isScale bool, cloudName 
 		if profile.EnableVMSSNodePublicIP == nil {
 			profile.EnableVMSSNodePublicIP = to.BoolPtr(DefaultEnableVMSSNodePublicIP)
 		}
+
+		if !p.OrchestratorProfile.IsKubernetes() {
+			profile.Distro = Ubuntu
+		}
 	}
 }
 
@@ -718,27 +726,70 @@ func (p *Properties) setAgentProfileDefaults(isUpgrade, isScale bool, cloudName 
 func (p *Properties) setWindowsProfileDefaults(isUpgrade, isScale bool) {
 	windowsProfile := p.WindowsProfile
 	if !isUpgrade && !isScale {
-		if windowsProfile.WindowsPublisher == "" {
-			windowsProfile.WindowsPublisher = AKSWindowsServer2019OSImageConfig.ImagePublisher
-		}
-		if windowsProfile.WindowsOffer == "" {
-			windowsProfile.WindowsOffer = AKSWindowsServer2019OSImageConfig.ImageOffer
-		}
-		if windowsProfile.WindowsSku == "" {
-			windowsProfile.WindowsSku = AKSWindowsServer2019OSImageConfig.ImageSku
-		}
+		// This allows caller to use the latest ImageVersion and WindowsSku for adding a new Windows pool to an existing cluster.
+		// We must assure that same WindowsPublisher and WindowsOffer are used in an existing cluster.
+		if windowsProfile.WindowsPublisher == AKSWindowsServer2019OSImageConfig.ImagePublisher && windowsProfile.WindowsOffer == AKSWindowsServer2019OSImageConfig.ImageOffer {
+			if windowsProfile.WindowsSku == "" {
+				windowsProfile.WindowsSku = AKSWindowsServer2019OSImageConfig.ImageSku
+			}
+			if windowsProfile.ImageVersion == "" {
+				if windowsProfile.WindowsSku == AKSWindowsServer2019OSImageConfig.ImageSku {
+					windowsProfile.ImageVersion = AKSWindowsServer2019OSImageConfig.ImageVersion
+				} else {
+					windowsProfile.ImageVersion = "latest"
+				}
+			}
+		} else if windowsProfile.WindowsPublisher == WindowsServer2019OSImageConfig.ImagePublisher && windowsProfile.WindowsOffer == WindowsServer2019OSImageConfig.ImageOffer {
+			if windowsProfile.WindowsSku == "" {
+				windowsProfile.WindowsSku = WindowsServer2019OSImageConfig.ImageSku
+			}
+			if windowsProfile.ImageVersion == "" {
+				if windowsProfile.WindowsSku == WindowsServer2019OSImageConfig.ImageSku {
+					windowsProfile.ImageVersion = WindowsServer2019OSImageConfig.ImageVersion
+				} else {
+					windowsProfile.ImageVersion = "latest"
+				}
+			}
+		} else {
+			if windowsProfile.WindowsPublisher == "" {
+				windowsProfile.WindowsPublisher = AKSWindowsServer2019OSImageConfig.ImagePublisher
+			}
+			if windowsProfile.WindowsOffer == "" {
+				windowsProfile.WindowsOffer = AKSWindowsServer2019OSImageConfig.ImageOffer
+			}
+			if windowsProfile.WindowsSku == "" {
+				windowsProfile.WindowsSku = AKSWindowsServer2019OSImageConfig.ImageSku
+			}
 
-		if windowsProfile.ImageVersion == "" {
-			// default versions are specific to a publisher/offer/sku
-			if windowsProfile.WindowsPublisher == AKSWindowsServer2019OSImageConfig.ImagePublisher && windowsProfile.WindowsOffer == AKSWindowsServer2019OSImageConfig.ImageOffer && windowsProfile.WindowsSku == AKSWindowsServer2019OSImageConfig.ImageSku {
+			if windowsProfile.ImageVersion == "" {
+				// default versions are specific to a publisher/offer/sku
+				if windowsProfile.WindowsPublisher == AKSWindowsServer2019OSImageConfig.ImagePublisher && windowsProfile.WindowsOffer == AKSWindowsServer2019OSImageConfig.ImageOffer && windowsProfile.WindowsSku == AKSWindowsServer2019OSImageConfig.ImageSku {
+					windowsProfile.ImageVersion = AKSWindowsServer2019OSImageConfig.ImageVersion
+				} else {
+					windowsProfile.ImageVersion = "latest"
+				}
+			}
+		}
+	} else if isUpgrade {
+		// Image reference publisher and offer only can be set when you create the scale set so we keep the old values.
+		// Reference: https://docs.microsoft.com/en-us/azure/virtual-machine-scale-sets/virtual-machine-scale-sets-upgrade-scale-set#create-time-properties
+		if windowsProfile.WindowsPublisher == AKSWindowsServer2019OSImageConfig.ImagePublisher && windowsProfile.WindowsOffer == AKSWindowsServer2019OSImageConfig.ImageOffer {
+			if windowsProfile.ImageVersion == "" {
 				windowsProfile.ImageVersion = AKSWindowsServer2019OSImageConfig.ImageVersion
-			} else if windowsProfile.WindowsPublisher == WindowsServer2019OSImageConfig.ImagePublisher && windowsProfile.WindowsOffer == WindowsServer2019OSImageConfig.ImageOffer && windowsProfile.WindowsSku == WindowsServer2019OSImageConfig.ImageSku {
+			}
+			if windowsProfile.WindowsSku == "" {
+				windowsProfile.WindowsSku = AKSWindowsServer2019OSImageConfig.ImageSku
+			}
+		} else if windowsProfile.WindowsPublisher == WindowsServer2019OSImageConfig.ImagePublisher && windowsProfile.WindowsOffer == WindowsServer2019OSImageConfig.ImageOffer {
+			if windowsProfile.ImageVersion == "" {
 				windowsProfile.ImageVersion = WindowsServer2019OSImageConfig.ImageVersion
-			} else {
-				windowsProfile.ImageVersion = "latest"
+			}
+			if windowsProfile.WindowsSku == "" {
+				windowsProfile.WindowsSku = WindowsServer2019OSImageConfig.ImageSku
 			}
 		}
 	}
+	// Scale: Keep the same version to match other nodes because we have no way to rollback
 }
 
 // setStorageDefaults for agents
@@ -758,21 +809,21 @@ func (p *Properties) setStorageDefaults() {
 				profile.StorageProfile = StorageAccount
 			}
 		}
-		if len(profile.AvailabilityProfile) == 0 {
-			profile.AvailabilityProfile = VirtualMachineScaleSets
-			// VMSS is not supported for k8s below 1.10.2
-			if p.OrchestratorProfile.OrchestratorType == Kubernetes && !common.IsKubernetesVersionGe(p.OrchestratorProfile.OrchestratorVersion, "1.10.2") {
-				profile.AvailabilityProfile = AvailabilitySet
-			}
-		}
-		if len(profile.ScaleSetEvictionPolicy) == 0 && profile.ScaleSetPriority == ScaleSetPriorityLow {
-			profile.ScaleSetEvictionPolicy = ScaleSetEvictionPolicyDelete
-		}
 	}
 }
 
 func (p *Properties) setHostedMasterProfileDefaults() {
 	p.HostedMasterProfile.Subnet = DefaultKubernetesMasterSubnet
+}
+
+func (p *Properties) setTelemetryProfileDefaults() {
+	if p.TelemetryProfile == nil {
+		p.TelemetryProfile = &TelemetryProfile{}
+	}
+
+	if len(p.TelemetryProfile.ApplicationInsightsKey) == 0 {
+		p.TelemetryProfile.ApplicationInsightsKey = ""
+	}
 }
 
 // DefaultCertParams is the params when we set the default certs.

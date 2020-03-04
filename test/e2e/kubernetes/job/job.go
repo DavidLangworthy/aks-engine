@@ -1,3 +1,4 @@
+//+build test
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
@@ -212,7 +213,8 @@ func GetWithRetry(jobName, namespace string, sleep, timeout time.Duration) (*Job
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- GetAsync(jobName, namespace):
+			default:
+				ch <- GetAsync(jobName, namespace)
 				time.Sleep(sleep)
 			}
 		}
@@ -296,7 +298,8 @@ func WaitOnSucceeded(jobPrefix, namespace string, sleep, timeout time.Duration) 
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- AreAllJobsSucceededAsync(jobPrefix, namespace):
+			default:
+				ch <- AreAllJobsSucceededAsync(jobPrefix, namespace)
 				time.Sleep(sleep)
 			}
 		}
@@ -376,7 +379,8 @@ func WaitOnDeleted(jobPrefix, namespace string, sleep, timeout time.Duration) (b
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- GetAllByPrefixAsync(jobPrefix, namespace):
+			default:
+				ch <- GetAllByPrefixAsync(jobPrefix, namespace)
 				time.Sleep(sleep)
 			}
 		}

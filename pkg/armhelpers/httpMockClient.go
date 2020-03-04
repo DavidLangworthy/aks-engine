@@ -8,8 +8,9 @@ import (
 	"io/ioutil"
 	"net/http"
 
+	"github.com/Azure/aks-engine/pkg/api"
 	"github.com/Azure/aks-engine/pkg/armhelpers/testserver"
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 	"github.com/Azure/go-autorest/autorest/azure"
 )
 
@@ -17,12 +18,13 @@ const (
 	subscriptionID                             = "cc6b141e-6afc-4786-9bf6-e3b9a5601460"
 	tenantID                                   = "19590a3f-b1af-4e6b-8f63-f917cbf40711"
 	resourceGroup                              = "TestResourceGroup"
-	computeAPIVersion                          = "2018-10-01"
-	diskAPIVersion                             = "2018-06-01"
+	computeAPIVersion                          = "2019-07-01"
+	diskAPIVersion                             = "2019-07-01"
 	networkAPIVersion                          = "2018-08-01"
 	deploymentAPIVersion                       = "2018-05-01"
 	resourceGroupAPIVersion                    = "2018-05-01"
 	logAnalyticsAPIVersion                     = "2015-11-01-preview"
+	subscriptionsAPIVersion                    = "2016-06-01"
 	deploymentName                             = "testDeplomentName"
 	deploymentStatus                           = "08586474508192185203"
 	virtualMachineScaleSetName                 = "vmscalesetName"
@@ -40,7 +42,12 @@ const (
 	virutalDiskName                            = "testVirtualdickName"
 	location                                   = "local"
 	operationID                                = "7184adda-13fc-4d49-b941-fbbc3b08ed64"
+	publisher                                  = "DefaultPublisher"
+	sku                                        = "DefaultSku"
+	offer                                      = "DefaultOffer"
+	version                                    = "DefaultVersion"
 	filePathTokenResponse                      = "httpMockClientData/tokenResponse.json"
+	filePathListLocations                      = "httpMockClientData/listLocations.json"
 	filePathListVirtualMachineScaleSets        = "httpMockClientData/listVirtualMachineScaleSets.json"
 	filePathListVirtualMachineScaleSetVMs      = "httpMockClientData/listVirtualMachineScaleSetVMs.json"
 	filePathListVirtualMachines                = "httpMockClientData/listVirtualMachines.json"
@@ -54,6 +61,8 @@ const (
 	filePathCreateOrUpdateWorkspace            = "httpMockClientData/createOrUpdateWorkspace.json"
 	filePathListWorkspacesByResourceGroupInMC  = "httpMockClientData/getListWorkspacesByResourceGroup.json"
 	filePathCreateOrUpdateWorkspaceInMC        = "httpMockClientData/createOrUpdateWorkspace.json"
+	filePathGetVirtualMachineImage             = "httpMockClientData/getVirtualMachineImage.json"
+	filePathListVirtualMachineImages           = "httpMockClientData/listVirtualMachineImages.json"
 )
 
 //HTTPMockClient is an wrapper of httpmock
@@ -67,6 +76,7 @@ type HTTPMockClient struct {
 	NetworkAPIVersion                          string
 	DeploymentAPIVersion                       string
 	LogAnalyticsAPIVersion                     string
+	SubscriptionsAPIVersion                    string
 	DeploymentName                             string
 	DeploymentStatus                           string
 	VirtualMachineScaleSetName                 string
@@ -84,6 +94,11 @@ type HTTPMockClient struct {
 	Location                                   string
 	OperationID                                string
 	TokenResponse                              string
+	Publisher                                  string
+	Sku                                        string
+	Offer                                      string
+	Version                                    string
+	ResponseListLocations                      string
 	ResponseListVirtualMachineScaleSets        string
 	ResponseListVirtualMachineScaleSetVMs      string
 	ResponseListVirtualMachines                string
@@ -97,6 +112,8 @@ type HTTPMockClient struct {
 	ResponseCreateOrUpdateWorkspace            string
 	ResponseListWorkspacesByResourceGroupInMC  string
 	ResponseCreateOrUpdateWorkspaceInMC        string
+	ResponseGetVirtualMachineImage             string
+	ResponseListVirtualMachineImages           string
 	mux                                        *http.ServeMux
 	server                                     *testserver.TestServer
 }
@@ -129,6 +146,7 @@ func NewHTTPMockClient() (HTTPMockClient, error) {
 		LogAnalyticsAPIVersion:              logAnalyticsAPIVersion,
 		NetworkAPIVersion:                   networkAPIVersion,
 		DeploymentAPIVersion:                deploymentAPIVersion,
+		SubscriptionsAPIVersion:             subscriptionsAPIVersion,
 		DeploymentName:                      deploymentName,
 		DeploymentStatus:                    deploymentStatus,
 		VirtualMachineScaleSetName:          virtualMachineScaleSetName,
@@ -145,6 +163,10 @@ func NewHTTPMockClient() (HTTPMockClient, error) {
 		VirutalDiskName:                     virutalDiskName,
 		Location:                            location,
 		OperationID:                         operationID,
+		Publisher:                           publisher,
+		Offer:                               offer,
+		Sku:                                 sku,
+		Version:                             version,
 		mux:                                 http.NewServeMux(),
 	}
 	var err error
@@ -202,6 +224,21 @@ func NewHTTPMockClient() (HTTPMockClient, error) {
 		return client, err
 	}
 	client.ResponseCreateOrUpdateWorkspaceInMC, err = readFromFile(filePathCreateOrUpdateWorkspaceInMC)
+	if err != nil {
+		return client, err
+	}
+
+	client.ResponseGetVirtualMachineImage, err = readFromFile(filePathGetVirtualMachineImage)
+	if err != nil {
+		return client, err
+	}
+
+	client.ResponseListVirtualMachineImages, err = readFromFile(filePathListVirtualMachineImages)
+	if err != nil {
+		return client, err
+	}
+
+	client.ResponseListLocations, err = readFromFile(filePathListLocations)
 	if err != nil {
 		return client, err
 	}
@@ -298,6 +335,18 @@ func (mc HTTPMockClient) RegisterListVirtualMachines() {
 			w.WriteHeader(http.StatusNotFound)
 		} else {
 			_, _ = fmt.Fprint(w, mc.ResponseListVirtualMachines)
+		}
+	})
+}
+
+// RegisterListLocations registers the mock response for ListVirtualMachines
+func (mc HTTPMockClient) RegisterListLocations() {
+	pattern := fmt.Sprintf("/subscriptions/%s/locations", mc.SubscriptionID)
+	mc.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("api-version") != mc.SubscriptionsAPIVersion {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			_, _ = fmt.Fprint(w, mc.ResponseListLocations)
 		}
 	})
 }
@@ -592,6 +641,54 @@ func (mc HTTPMockClient) RegisterEnsureDefaultLogAnalyticsWorkspaceCreateNewInMC
 		}
 	})
 
+}
+
+// RegisterVMImageFetcherInterface registers the mock response for VMImageFetcherInterface methods.
+func (mc *HTTPMockClient) RegisterVMImageFetcherInterface() {
+	pattern := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Compute/locations/%s/publishers/%s/artifacttypes/vmimage/offers/%s/skus/%s/versions/%s", mc.SubscriptionID, mc.Location, mc.Publisher, mc.Offer, mc.Sku, mc.Version)
+	mc.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("api-version") != mc.ComputeAPIVersion {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			_, _ = fmt.Fprint(w, mc.ResponseGetVirtualMachineImage)
+		}
+	})
+
+	pattern = fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Compute/locations/%s/publishers/%s/artifacttypes/vmimage/offers/%s/skus/%s/versions/%s", mc.SubscriptionID, mc.Location, api.Ubuntu1604OSImageConfig.ImagePublisher, api.Ubuntu1604OSImageConfig.ImageOffer, api.Ubuntu1604OSImageConfig.ImageSku, api.Ubuntu1604OSImageConfig.ImageVersion)
+	mc.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("api-version") != mc.ComputeAPIVersion {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			_, _ = fmt.Fprint(w, mc.ResponseGetVirtualMachineImage)
+		}
+	})
+
+	pattern = fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Compute/locations/%s/publishers/%s/artifacttypes/vmimage/offers/%s/skus/%s/versions/%s", mc.SubscriptionID, mc.Location, api.WindowsServer2019OSImageConfig.ImagePublisher, api.WindowsServer2019OSImageConfig.ImageOffer, api.WindowsServer2019OSImageConfig.ImageSku, api.WindowsServer2019OSImageConfig.ImageVersion)
+	mc.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("api-version") != mc.ComputeAPIVersion {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			_, _ = fmt.Fprint(w, mc.ResponseGetVirtualMachineImage)
+		}
+	})
+
+	pattern = fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Compute/locations/%s/publishers/%s/artifacttypes/vmimage/offers/%s/skus/%s/versions/%s", mc.SubscriptionID, mc.Location, api.AKSUbuntu1604OSImageConfig.ImagePublisher, api.AKSUbuntu1604OSImageConfig.ImageOffer, api.AKSUbuntu1604OSImageConfig.ImageSku, api.AKSUbuntu1604OSImageConfig.ImageVersion)
+	mc.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("api-version") != mc.ComputeAPIVersion {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			_, _ = fmt.Fprint(w, mc.ResponseGetVirtualMachineImage)
+		}
+	})
+
+	pattern = fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Compute/locations/%s/publishers/%s/artifacttypes/vmimage/offers/%s/skus/%s/versions", mc.SubscriptionID, mc.Location, mc.Publisher, mc.Offer, mc.Sku)
+	mc.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("api-version") != mc.ComputeAPIVersion {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			_, _ = fmt.Fprint(w, mc.ResponseListVirtualMachineImages)
+		}
+	})
 }
 
 func readFromFile(filePath string) (string, error) {

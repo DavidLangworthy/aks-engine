@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/Azure/aks-engine/pkg/api"
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 	"github.com/Azure/go-autorest/autorest/to"
 	. "github.com/onsi/gomega"
 )
@@ -22,10 +22,11 @@ func TestMarshalJSON(t *testing.T) {
 				Secret:   "bazSecret",
 			},
 			MasterProfile: &api.MasterProfile{
-				Count:               3,
-				DNSPrefix:           "myprefix1",
-				VMSize:              "Standard_DS2_v2",
-				AvailabilityProfile: api.VirtualMachineScaleSets,
+				Count:                     3,
+				DNSPrefix:                 "myprefix1",
+				VMSize:                    "Standard_DS2_v2",
+				AvailabilityProfile:       api.VirtualMachineScaleSets,
+				PlatformUpdateDomainCount: to.IntPtr(3),
 			},
 			OrchestratorProfile: &api.OrchestratorProfile{
 				OrchestratorType:    api.Kubernetes,

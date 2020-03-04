@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/Azure/aks-engine/pkg/api"
+	"github.com/Azure/aks-engine/pkg/api/common"
 )
 
 func GetKubernetesOutputs(cs *api.ContainerService) map[string]interface{} {
@@ -71,7 +72,7 @@ func GetKubernetesOutputs(cs *api.ContainerService) map[string]interface{} {
 		}
 	}
 
-	if cs.Properties.OrchestratorProfile.KubernetesConfig.IsAddonEnabled(AppGwIngressAddonName) {
+	if cs.Properties.OrchestratorProfile.KubernetesConfig.IsAddonEnabled(common.AppGwIngressAddonName) {
 		outputs["applicationGatewayName"] = map[string]interface{}{
 			"type":  "string",
 			"value": "[variables('appGwName')]",
@@ -102,7 +103,7 @@ func getMasterOutputs(cs *api.ContainerService) map[string]interface{} {
 		"value": masterFQDN,
 	}
 
-	if cs.Properties.AnyAgentUsesAvailabilitySets() {
+	if cs.Properties.HasVMASAgentPool() {
 		outputs["agentStorageAccountSuffix"] = map[string]interface{}{
 			"type":  "string",
 			"value": "[variables('storageAccountBaseName')]",

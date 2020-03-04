@@ -226,6 +226,12 @@ func (dc *deployCmd) loadAPIModel() error {
 			return errors.Wrap(err, "error parsing the api model")
 		}
 		writeCustomCloudProfile(dc.containerService)
+
+		if dc.containerService.Properties.CustomCloudProfile.IdentitySystem == "" || dc.containerService.Properties.CustomCloudProfile.IdentitySystem != dc.authProvider.getAuthArgs().IdentitySystem {
+			if dc.authProvider != nil {
+				dc.containerService.Properties.CustomCloudProfile.IdentitySystem = dc.authProvider.getAuthArgs().IdentitySystem
+			}
+		}
 	}
 
 	if err = dc.getAuthArgs().validateAuthArgs(); err != nil {
@@ -358,19 +364,11 @@ func autofillApimodel(dc *deployCmd) error {
 
 	if k8sConfig != nil && k8sConfig.Addons != nil && k8sConfig.IsContainerMonitoringAddonEnabled() {
 		log.Infoln("container monitoring addon enabled")
-		var workspaceDomain string
-		cloudspecConfig := dc.containerService.GetCloudSpecConfig()
-		switch cloudspecConfig.CloudName {
-		case "AzurePublicCloud":
-			workspaceDomain = "opinsights.azure.com"
-		case "AzureChinaCloud":
-			workspaceDomain = "opinsights.azure.cn"
-		case "AzureUSGovernmentCloud":
-			workspaceDomain = "opinsights.azure.us"
-		default:
-			return errors.Wrapf(err, "apimodel: container monitoring addon not supported in this cloud: %s", cloudspecConfig.CloudName)
+		cloudOrDependenciesLocation := dc.containerService.GetCloudSpecConfig().CloudName
+		if dc.containerService.Properties.IsAzureStackCloud() {
+			cloudOrDependenciesLocation = string(dc.containerService.Properties.CustomCloudProfile.DependenciesLocation)
 		}
-
+		workspaceDomain := helpers.GetLogAnalyticsWorkspaceDomain(cloudOrDependenciesLocation)
 		err := dc.configureContainerMonitoringAddon(ctx, k8sConfig, workspaceDomain)
 		if err != nil {
 			return errors.Wrap(err, "Failed to configure container monitoring addon")
@@ -406,6 +404,10 @@ func (dc *deployCmd) run() error {
 		return errors.Wrapf(err, "in SetPropertiesDefaults template %s", dc.apimodelPath)
 	}
 
+	if err = dc.validateOSBaseImage(); err != nil {
+		return errors.Wrapf(err, "validating OS base images required by %s", dc.apimodelPath)
+	}
+
 	template, parameters, err := templateGenerator.GenerateTemplateV2(dc.containerService, engine.DefaultGeneratorCode, BuildTag)
 	if err != nil {
 		return errors.Wrapf(err, "generating template %s", dc.apimodelPath)
@@ -439,9 +441,10 @@ func (dc *deployCmd) run() error {
 		return err
 	}
 
-	deploymentSuffix := dc.random.Int31()
 	cx, cancel := context.WithTimeout(context.Background(), armhelpers.DefaultARMOperationTimeout)
 	defer cancel()
+
+	deploymentSuffix := dc.random.Int31()
 
 	if res, err := dc.client.DeployTemplate(
 		cx,
@@ -472,6 +475,9 @@ func (dc *deployCmd) configureContainerMonitoringAddon(ctx context.Context, k8sC
 	var err error
 	addon := k8sConfig.GetAddonByName("container-monitoring")
 	if addon.Config == nil || len(addon.Config) == 0 || addon.Config["logAnalyticsWorkspaceResourceId"] != "" {
+		if dc.containerService.Properties.IsAzureStackCloud() {
+			return errors.New("This is not supported option for AzureStackCloud. Please provide config with workspaceGuid and workspaceKey")
+		}
 		workspaceResourceID = strings.TrimSpace(addon.Config["logAnalyticsWorkspaceResourceId"])
 		if workspaceResourceID != "" {
 			log.Infoln("using provided log analytics workspace resource id:", workspaceResourceID)
@@ -527,6 +533,18 @@ func (dc *deployCmd) configureContainerMonitoringAddon(ctx context.Context, k8sC
 		log.Infoln("workspaceGuid:", workspaceGUID)
 		log.Infoln("workspaceKey:", workspaceKey)
 		log.Infoln("workspaceDomain:", workspaceDomain)
+	}
+	return nil
+}
+
+// validateOSBaseImage checks if the OS image is available on the target cloud (ATM, Azure Stack only)
+func (dc *deployCmd) validateOSBaseImage() error {
+	if dc.containerService.Properties.IsAzureStackCloud() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := armhelpers.ValidateRequiredImages(ctx, dc.location, dc.containerService.Properties, dc.client); err != nil {
+			return errors.Wrap(err, "OS base image not available in target cloud")
+		}
 	}
 	return nil
 }

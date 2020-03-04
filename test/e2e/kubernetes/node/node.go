@@ -1,3 +1,4 @@
+//+build test
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
@@ -38,7 +39,8 @@ type Metadata struct {
 
 // Spec contains things like taints
 type Spec struct {
-	Taints []Taint `json:"taints"`
+	Taints        []Taint `json:"taints"`
+	Unschedulable bool    `json:"unschedulable"`
 }
 
 // Taint defines a Node Taint
@@ -105,6 +107,20 @@ func GetNodesAsync() GetNodesResult {
 	}
 }
 
+// GetReadyNodesAsync wraps Get with a struct response for goroutine + channel usage
+func GetReadyNodesAsync() GetNodesResult {
+	list, err := GetReady()
+	if list == nil {
+		list = &List{
+			Nodes: []Node{},
+		}
+	}
+	return GetNodesResult{
+		Nodes: list.Nodes,
+		Err:   err,
+	}
+}
+
 // GetByRegexAsync wraps GetByRegex with a struct response for goroutine + channel usage
 func GetByRegexAsync(regex string) GetNodesResult {
 	nodes, err := GetByRegex(regex)
@@ -119,6 +135,9 @@ func GetByRegexAsync(regex string) GetNodesResult {
 
 // IsReady returns if the node is in a Ready state
 func (n *Node) IsReady() bool {
+	if n.Spec.Unschedulable {
+		return false
+	}
 	for _, condition := range n.Status.Conditions {
 		if condition.Type == "Ready" && condition.Status == "True" {
 			return true
@@ -205,7 +224,7 @@ func AreNNodesReady(nodeCount int) bool {
 	}
 	list, _ := Get()
 	var ready int
-	if list != nil && len(list.Nodes) == nodeCount {
+	if list != nil {
 		for _, node := range list.Nodes {
 			nodeReady := node.IsReady()
 			if !nodeReady {
@@ -215,6 +234,47 @@ func AreNNodesReady(nodeCount int) bool {
 		}
 	}
 	if ready == nodeCount {
+		return true
+	}
+	return false
+}
+
+// AreMinNodesReady returns if the minimum nodes ready count is met
+func AreMinNodesReady(nodeCount int) bool {
+	if nodeCount == -1 {
+		return AreAllReady()
+	}
+	list, _ := Get()
+	var ready int
+	if list != nil {
+		for _, node := range list.Nodes {
+			nodeReady := node.IsReady()
+			if !nodeReady {
+				return false
+			}
+			ready++
+		}
+	}
+	if ready >= nodeCount {
+		return true
+	}
+	return false
+}
+
+// AreMaxNodesReady returns if nodes ready count is <= a maximum number
+func AreMaxNodesReady(nodeCount int) bool {
+	list, _ := Get()
+	var ready int
+	if list != nil {
+		for _, node := range list.Nodes {
+			nodeReady := node.IsReady()
+			if !nodeReady {
+				return false
+			}
+			ready++
+		}
+	}
+	if ready <= nodeCount {
 		return true
 	}
 	return false
@@ -230,7 +290,66 @@ func WaitOnReady(nodeCount int, sleep, timeout time.Duration) bool {
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- AreNNodesReady(nodeCount):
+			default:
+				ch <- AreNNodesReady(nodeCount)
+				time.Sleep(sleep)
+			}
+		}
+	}()
+	for {
+		select {
+		case ready := <-ch:
+			if ready {
+				return ready
+			}
+		case <-ctx.Done():
+			DescribeNodes()
+			return false
+		}
+	}
+}
+
+// WaitOnReadyMin will block until the minimum nodes ready count is met
+func WaitOnReadyMin(nodeCount int, sleep, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	ch := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				ch <- AreMinNodesReady(nodeCount)
+				time.Sleep(sleep)
+			}
+		}
+	}()
+	for {
+		select {
+		case ready := <-ch:
+			if ready {
+				return ready
+			}
+		case <-ctx.Done():
+			DescribeNodes()
+			return false
+		}
+	}
+}
+
+// WaitOnReadyMax will block until nodes ready count is <= a maximum number
+func WaitOnReadyMax(nodeCount int, sleep, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	ch := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				ch <- AreMaxNodesReady(nodeCount)
 				time.Sleep(sleep)
 			}
 		}
@@ -268,6 +387,40 @@ func Get() (*List, error) {
 	return &nl, nil
 }
 
+// GetReadyWithRetry gets nodes, allowing for retries
+func GetReadyWithRetry(sleep, timeout time.Duration) ([]Node, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	ch := make(chan GetNodesResult)
+	var mostRecentGetReadyWithRetryError error
+	var nodes []Node
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				ch <- GetReadyNodesAsync()
+				time.Sleep(sleep)
+			}
+		}
+	}()
+	for {
+		select {
+		case result := <-ch:
+			mostRecentGetReadyWithRetryError = result.Err
+			nodes = result.Nodes
+			if mostRecentGetReadyWithRetryError == nil {
+				if len(nodes) > 0 {
+					return nodes, nil
+				}
+			}
+		case <-ctx.Done():
+			return nil, errors.Errorf("GetReadyWithRetry timed out: %s\n", mostRecentGetReadyWithRetryError)
+		}
+	}
+}
+
 // GetWithRetry gets nodes, allowing for retries
 func GetWithRetry(sleep, timeout time.Duration) ([]Node, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -280,7 +433,8 @@ func GetWithRetry(sleep, timeout time.Duration) ([]Node, error) {
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- GetNodesAsync():
+			default:
+				ch <- GetNodesAsync()
 				time.Sleep(sleep)
 			}
 		}
@@ -313,7 +467,8 @@ func GetByRegexWithRetry(regex string, sleep, timeout time.Duration) ([]Node, er
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- GetByRegexAsync(regex):
+			default:
+				ch <- GetByRegexAsync(regex)
 				time.Sleep(sleep)
 			}
 		}
@@ -346,6 +501,8 @@ func GetReady() (*List, error) {
 	for _, node := range l.Nodes {
 		if node.IsReady() {
 			nl.Nodes = append(nl.Nodes, node)
+		} else {
+			log.Printf("found an unready node!")
 		}
 	}
 	return nl, nil

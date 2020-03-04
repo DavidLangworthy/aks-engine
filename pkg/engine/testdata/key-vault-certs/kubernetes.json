@@ -3,8 +3,8 @@
   "properties": {
     "orchestratorProfile": {
       "orchestratorType": "Kubernetes",
-      "orchestratorRelease": "1.11",
-      "orchestratorVersion": "1.11.9",
+      "orchestratorRelease": "1.13",
+      "orchestratorVersion": "1.13.11",
       "kubernetesConfig": {
         "kubernetesImageBase": "k8s.gcr.io/",
         "clusterSubnet": "10.240.0.0/12",
@@ -196,15 +196,15 @@
             "containers": [
               {
                 "name": "omsagent",
-                "image": "mcr.microsoft.com/azuremonitor/containerinsights/ciprod:ciprod07092019",
-                "cpuRequests": "50m",
-                "memoryRequests": "225Mi",
-                "cpuLimits": "150m",
-                "memoryLimits": "600Mi"
+                "image": "mcr.microsoft.com/azuremonitor/containerinsights/ciprod:ciprod01072020",
+                "cpuRequests": "150m",
+                "memoryRequests": "250Mi",
+                "cpuLimits": "1",
+                "memoryLimits": "750Mi"
               }
             ],
             "config": {
-              "dockerProviderVersion": "6.0.0-0",
+              "dockerProviderVersion": "8.0.0-2",
               "omsAgentVersion": "1.10.0.1"
             }
           },
@@ -490,14 +490,14 @@
           }
         ]
       },
-      "secrets":[
+      "secrets": [
         {
-          "sourceVault":{
-            "id":"vaultId"
+          "sourceVault": {
+            "id": "vaultId"
           },
-          "vaultCertificates":[
+          "vaultCertificates": [
             {
-              "certificateUrl" :"http://url1"
+              "certificateUrl": "http://url1"
             }
           ]
         }

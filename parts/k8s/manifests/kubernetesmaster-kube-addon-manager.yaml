@@ -9,7 +9,7 @@ spec:
   hostNetwork: true
   containers:
   - name: kube-addon-manager
-    image: <img>
+    image: {{ContainerImage "kube-addon-manager"}}
     imagePullPolicy: IfNotPresent
     resources:
       requests:

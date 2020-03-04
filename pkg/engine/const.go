@@ -32,6 +32,10 @@ const (
 	NetworkPolicyCilium = "cilium"
 	// NetworkPluginCilium is the string expression for cilium network plugin config option
 	NetworkPluginCilium = NetworkPolicyCilium
+	// NetworkPolicyAntrea is the string expression for antrea network policy config option
+	NetworkPolicyAntrea = "antrea"
+	// NetworkPluginAntrea is the string expression for antrea network plugin config option
+	NetworkPluginAntrea = NetworkPolicyAntrea
 	// NetworkPolicyAzure is the string expression for Azure CNI network policy manager
 	NetworkPolicyAzure = "azure"
 	// NetworkPluginAzure is the string expression for Azure CNI plugin
@@ -40,78 +44,8 @@ const (
 	NetworkPluginKubenet = "kubenet"
 	// NetworkPluginFlannel is the string expression for flannel network plugin
 	NetworkPluginFlannel = "flannel"
-	// KubeDNSAddonName is the name of the kube-dns-deployment addon
-	KubeDNSAddonName = "kube-dns-deployment"
-	// CoreDNSAddonName is the name of the coredns addon
-	CoreDNSAddonName = "coredns"
-	// DNSAutoscalerAddonName is the name of the coredns addon
-	DNSAutoscalerAddonName = "dns-autoscaler"
-	// KubeProxyAddonName is the name of the kube-proxy config addon
-	KubeProxyAddonName = "kube-proxy-daemonset"
-	// AzureStorageClassesAddonName is the name of the azure storage classes addon
-	AzureStorageClassesAddonName = "azure-storage-classes"
-	// AzureNetworkPolicyAddonName is the name of the azure npm daemon set addon
-	AzureNetworkPolicyAddonName = "azure-npm-daemonset"
-	// AzureVnetTelemetryAddonName is the name of the Azure vnet telemetry addon
-	AzureVnetTelemetryAddonName = "azure-vnet-telemetry-daemonset"
-	// CalicoAddonName is the name of calico daemonset addon
-	CalicoAddonName = "calico-daemonset"
-	// CiliumAddonName is the name of cilium daemonset addon
-	CiliumAddonName = "cilium-daemonset"
-	// FlannelAddonName is the name of flannel plugin daemonset addon
-	FlannelAddonName = "flannel-daemonset"
-	// AADAdminGroupAddonName is the name of the default admin group RBAC addon
-	AADAdminGroupAddonName = "aad-default-admin-group-rbac"
-	// AzureCloudProviderAddonName is the name of the azure cloud provider deployment addon
-	AzureCloudProviderAddonName = "azure-cloud-provider-deployment"
-	// AzureCNINetworkMonitorAddonName is the name of the azure cni network monitor addon
-	AzureCNINetworkMonitorAddonName = "azure-cni-networkmonitor"
-	// AuditPolicyAddonName is the name of the audit policy addon
-	AuditPolicyAddonName = "audit-policy"
-	// TillerAddonName is the name of the tiller addon deployment
-	TillerAddonName = "tiller"
-	// AADPodIdentityAddonName is the name of the aad-pod-identity addon deployment
-	AADPodIdentityAddonName = "aad-pod-identity"
-	// ACIConnectorAddonName is the name of the aci-connector addon deployment
-	ACIConnectorAddonName = "aci-connector"
-	// AppGwIngressAddonName appgw addon
-	AppGwIngressAddonName = "appgw-ingress"
-	// AzureCSIStorageClassesAddonName is the name of Azure CSI storage classes addon
-	AzureCSIStorageClassesAddonName = "azure-csi-storage-classes"
-	// AzureDiskCSIDriverAddonName is the name of Azure Disk CSI Driver addon
-	AzureDiskCSIDriverAddonName = "azuredisk-csi-driver"
-	// AzureFileCSIDriverAddonName is the name of Azure File CSI Driver addon
-	AzureFileCSIDriverAddonName = "azurefile-csi-driver"
-	// DashboardAddonName is the name of the kubernetes-dashboard addon deployment
-	DashboardAddonName = "kubernetes-dashboard"
-	// ClusterAutoscalerAddonName is the name of the autoscaler addon deployment
-	ClusterAutoscalerAddonName = "cluster-autoscaler"
-	// BlobfuseFlexVolumeAddonName is the name of the blobfuse flexvolume addon
-	BlobfuseFlexVolumeAddonName = "blobfuse-flexvolume"
-	// SMBFlexVolumeAddonName is the name of the smb flexvolume addon
-	SMBFlexVolumeAddonName = "smb-flexvolume"
-	// KeyVaultFlexVolumeAddonName is the name of the keyvault flexvolume addon deployment
-	KeyVaultFlexVolumeAddonName = "keyvault-flexvolume"
-	// ScheduledMaintenanceAddonName is the name of the scheduled maintenance addon deployment
-	ScheduledMaintenanceAddonName = "scheduled-maintenance"
 	// DefaultGeneratorCode specifies the source generator of the cluster template.
 	DefaultGeneratorCode = "aksengine"
-	// ReschedulerAddonName is the name of the rescheduler addon deployment
-	ReschedulerAddonName = "rescheduler"
-	// HeapsterAddonName is the name of the heapster addon deployment
-	HeapsterAddonName = "heapster"
-	// MetricsServerAddonName is the name of the kubernetes Metrics server addon deployment
-	MetricsServerAddonName = "metrics-server"
-	// NVIDIADevicePluginAddonName is the name of the kubernetes NVIDIA Device Plugin daemon set
-	NVIDIADevicePluginAddonName = "nvidia-device-plugin"
-	// ContainerMonitoringAddonName is the name of the kubernetes Container Monitoring addon deployment
-	ContainerMonitoringAddonName = "container-monitoring"
-	// AzureCNINetworkMonitoringAddonName is the name of the Azure CNI networkmonitor addon
-	AzureCNINetworkMonitoringAddonName = "azure-cni-networkmonitor"
-	// IPMASQAgentAddonName is the name of the ip masq agent addon
-	IPMASQAgentAddonName = "ip-masq-agent"
-	// PodSecurityPolicyAddonName is the name of the PodSecurityPolicy addon
-	PodSecurityPolicyAddonName = "pod-security-policy"
 	// DefaultKubernetesKubeletMaxPods is the max pods per kubelet
 	DefaultKubernetesKubeletMaxPods = 110
 	// DefaultMasterEtcdServerPort is the default etcd server port for Kubernetes master nodes
@@ -141,15 +75,6 @@ const (
 )
 
 const (
-	// AzureStackSuffix is appended to kubernetes version on Azure Stack instances
-	AzureStackSuffix = "-azs"
-	// AzureStackPrefix is appended to windows binary version for Azure Stack instances
-	AzureStackPrefix = "azs-"
-	// AzureStackCaCertLocation is where Azure Stack's CRP drops the stamp CA certificate
-	AzureStackCaCertLocation = "/var/lib/waagent/Certificates.pem"
-)
-
-const (
 	kubeConfigJSON = "k8s/kubeconfig.json"
 	// Windows custom scripts
 	kubernetesWindowsAgentCustomDataPS1   = "k8s/kuberneteswindowssetup.ps1"
@@ -159,9 +84,11 @@ const (
 	kubernetesWindowsCniFunctionsPS1      = "k8s/windowscnifunc.ps1"
 	kubernetesWindowsAzureCniFunctionsPS1 = "k8s/windowsazurecnifunc.ps1"
 	kubernetesWindowsOpenSSHFunctionPS1   = "k8s/windowsinstallopensshfunc.ps1"
+	kubernetesWindowsLogsCleanupPS1       = "k8s/windowslogscleanup.ps1"
+	kubernetesWindowsNodeResetPS1         = "k8s/windowsnodereset.ps1"
 )
 
-// cloud-init (i.e. ARM customData) file references
+// cloud-init (i.e. ARM customData) source file references
 const (
 	kubernetesMasterNodeCustomDataYaml = "k8s/cloud-init/masternodecustomdata.yml"
 	kubernetesNodeCustomDataYaml       = "k8s/cloud-init/nodecustomdata.yml"
@@ -192,6 +119,17 @@ const (
 	// scripts and service for enabling ipv6 dual stack
 	dhcpv6SystemdService      = "k8s/cloud-init/artifacts/dhcpv6.service"
 	dhcpv6ConfigurationScript = "k8s/cloud-init/artifacts/enable-dhcpv6.sh"
+)
+
+// cloud-init destination file references
+const (
+	customCloudConfigCSEScriptFilepath   = "/opt/azure/containers/provision_configs_custom_cloud.sh"
+	cseHelpersScriptFilepath             = "/opt/azure/containers/provision_source.sh"
+	cseInstallScriptFilepath             = "/opt/azure/containers/provision_installs.sh"
+	cseConfigScriptFilepath              = "/opt/azure/containers/provision_configs.sh"
+	customSearchDomainsCSEScriptFilepath = "/opt/azure/containers/setup-custom-search-domains.sh"
+	dhcpV6ServiceCSEScriptFilepath       = "/etc/systemd/system/dhcpv6.service"
+	dhcpV6ConfigCSEScriptFilepath        = "/opt/azure/containers/enable-dhcpv6.sh"
 )
 
 const (
@@ -249,4 +187,90 @@ const (
 	swarmWinAgentResourcesVMAS    = "swarm/swarmwinagentresourcesvmas.t"
 	swarmWinAgentResourcesVMSS    = "swarm/swarmwinagentresourcesvmss.t"
 	windowsParams                 = "windowsparams.t"
+)
+
+// addons source and destination file references
+const (
+	heapsterAddonSourceFilename                    string = "kubernetesmasteraddons-heapster-deployment.yaml"
+	heapsterAddonDestinationFilename               string = "kube-heapster-deployment.yaml"
+	metricsServerAddonSourceFilename               string = "kubernetesmasteraddons-metrics-server-deployment.yaml"
+	metricsServerAddonDestinationFilename          string = "kube-metrics-server-deployment.yaml"
+	tillerAddonSourceFilename                      string = "kubernetesmasteraddons-tiller-deployment.yaml"
+	tillerAddonDestinationFilename                 string = "kube-tiller-deployment.yaml"
+	aadPodIdentityAddonSourceFilename              string = "kubernetesmasteraddons-aad-pod-identity-deployment.yaml"
+	aadPodIdentityAddonDestinationFilename         string = "aad-pod-identity-deployment.yaml"
+	aciConnectorAddonSourceFilename                string = "kubernetesmasteraddons-aci-connector-deployment.yaml"
+	aciConnectorAddonDestinationFilename           string = "aci-connector-deployment.yaml"
+	azureDiskCSIAddonSourceFilename                string = "kubernetesmasteraddons-azuredisk-csi-driver-deployment.yaml"
+	azureDiskCSIAddonDestinationFilename           string = "azuredisk-csi-driver-deployment.yaml"
+	azureFileCSIAddonSourceFilename                string = "kubernetesmasteraddons-azurefile-csi-driver-deployment.yaml"
+	azureFileCSIAddonDestinationFilename           string = "azurefile-csi-driver-deployment.yaml"
+	clusterAutoscalerAddonSourceFilename           string = "kubernetesmasteraddons-cluster-autoscaler-deployment.yaml"
+	clusterAutoscalerAddonDestinationFilename      string = "cluster-autoscaler-deployment.yaml"
+	blobfuseFlexVolumeAddonSourceFilename          string = "kubernetesmasteraddons-blobfuse-flexvolume-installer.yaml"
+	blobfuseFlexVolumeAddonDestinationFilename     string = "blobfuse-flexvolume-installer.yaml"
+	smbFlexVolumeAddonSourceFilename               string = "kubernetesmasteraddons-smb-flexvolume-installer.yaml"
+	smbFlexVolumeAddonDestinationFilename          string = "smb-flexvolume-installer.yaml"
+	keyvaultFlexVolumeAddonSourceFilename          string = "kubernetesmasteraddons-keyvault-flexvolume-installer.yaml"
+	keyvaultFlexVolumeAddonDestinationFilename     string = "keyvault-flexvolume-installer.yaml"
+	dashboardAddonSourceFilename                   string = "kubernetesmasteraddons-kubernetes-dashboard-deployment.yaml"
+	dashboardAddonDestinationFilename              string = "kubernetes-dashboard-deployment.yaml"
+	reschedulerAddonSourceFilename                 string = "kubernetesmasteraddons-kube-rescheduler-deployment.yaml"
+	reschedulerAddonDestinationFilename            string = "kube-rescheduler-deployment.yaml"
+	nvidiaAddonSourceFilename                      string = "kubernetesmasteraddons-nvidia-device-plugin-daemonset.yaml"
+	nvidiaAddonDestinationFilename                 string = "nvidia-device-plugin.yaml"
+	containerMonitoringAddonSourceFilename         string = "kubernetesmasteraddons-omsagent-daemonset.yaml"
+	containerMonitoringAddonDestinationFilename    string = "omsagent-daemonset.yaml"
+	ipMasqAgentAddonSourceFilename                 string = "ip-masq-agent.yaml"
+	ipMasqAgentAddonDestinationFilename            string = "ip-masq-agent.yaml"
+	azureCNINetworkMonitorAddonSourceFilename      string = "azure-cni-networkmonitor.yaml"
+	azureCNINetworkMonitorAddonDestinationFilename string = "azure-cni-networkmonitor.yaml"
+	dnsAutoscalerAddonSourceFilename               string = "dns-autoscaler.yaml"
+	dnsAutoscalerAddonDestinationFilename          string = "dns-autoscaler.yaml"
+	calicoAddonSourceFilename                      string = "kubernetesmasteraddons-calico-daemonset.yaml"
+	calicoAddonDestinationFilename                 string = "calico-daemonset.yaml"
+	azureNetworkPolicyAddonSourceFilename          string = "kubernetesmasteraddons-azure-npm-daemonset.yaml"
+	azureNetworkPolicyAddonDestinationFilename     string = "azure-npm-daemonset.yaml"
+	azurePolicyAddonSourceFilename                 string = "azure-policy-deployment.yaml"
+	azurePolicyAddonDestinationFilename            string = "azure-policy-deployment.yaml"
+	cloudNodeManagerAddonSourceFilename            string = "kubernetesmasteraddons-cloud-node-manager.yaml"
+	cloudNodeManagerAddonDestinationFilename       string = "cloud-node-manager.yaml"
+	nodeProblemDetectorAddonSourceFilename         string = "node-problem-detector.yaml"
+	nodeProblemDetectorAddonDestinationFilename    string = "node-problem-detector.yaml"
+	kubeDNSAddonSourceFilename                     string = "kubernetesmasteraddons-kube-dns-deployment.yaml"
+	kubeDNSAddonDestinationFilename                string = "kube-dns-deployment.yaml"
+	corednsAddonSourceFilename                     string = "coredns.yaml"
+	corednsAddonDestinationFilename                string = "coredns.yaml"
+	kubeProxyAddonSourceFilename                   string = "kubernetesmasteraddons-kube-proxy-daemonset.yaml"
+	kubeProxyAddonDestinationFilename              string = "kube-proxy-daemonset.yaml"
+	podSecurityPolicyAddonSourceFilename           string = "kubernetesmasteraddons-pod-security-policy.yaml"
+	podSecurityPolicyAddonDestinationFilename      string = "pod-security-policy.yaml"
+	aadDefaultAdminGroupAddonSourceFilename        string = "kubernetesmasteraddons-aad-default-admin-group-rbac.yaml"
+	aadDefaultAdminGroupDestinationFilename        string = "aad-default-admin-group-rbac.yaml"
+	ciliumAddonSourceFilename                      string = "kubernetesmasteraddons-cilium-daemonset.yaml"
+	ciliumAddonDestinationFilename                 string = "cilium-daemonset.yaml"
+	antreaAddonSourceFilename                      string = "antrea.yaml"
+	antreaAddonDestinationFilename                 string = "antrea.yaml"
+	auditPolicyAddonSourceFilename                 string = "kubernetesmaster-audit-policy.yaml"
+	auditPolicyAddonDestinationFilename            string = "audit-policy.yaml"
+	cloudProviderAddonSourceFilename               string = "kubernetesmasteraddons-azure-cloud-provider-deployment.yaml"
+	cloudProviderAddonDestinationFilename          string = "azure-cloud-provider-deployment.yaml"
+	flannelAddonSourceFilename                     string = "kubernetesmasteraddons-flannel-daemonset.yaml"
+	flannelAddonDestinationFilename                string = "flannel-daemonset.yaml"
+	scheduledMaintenanceAddonSourceFilename        string = "kubernetesmasteraddons-scheduled-maintenance-deployment.yaml"
+	scheduledMaintenanceAddonDestinationFilename   string = "scheduled-maintenance-deployment.yaml"
+)
+
+// components source and destination file references
+const (
+	schedulerComponentSourceFilename                   string = "kubernetesmaster-kube-scheduler.yaml"
+	schedulerComponentDestinationFilename              string = "kube-scheduler.yaml"
+	controllerManagerComponentSourceFilename           string = "kubernetesmaster-kube-controller-manager.yaml"
+	controllerManagerComponentDestinationFilename      string = "kube-controller-manager.yaml"
+	cloudControllerManagerComponentSourceFilename      string = "kubernetesmaster-cloud-controller-manager.yaml"
+	cloudControllerManagerComponentDestinationFilename string = "cloud-controller-manager.yaml"
+	apiServerComponentSourceFilename                   string = "kubernetesmaster-kube-apiserver.yaml"
+	apiServerComponentDestinationFilename              string = "kube-apiserver.yaml"
+	addonManagerComponentSourceFilename                string = "kubernetesmaster-kube-addon-manager.yaml"
+	addonManagerComponentDestinationFilename           string = "kube-addon-manager.yaml"
 )

@@ -1,19 +1,3 @@
-{{if .HasAadProfile}}
-    "aadTenantId": {
-      "defaultValue": "",
-      "metadata": {
-        "description": "The AAD tenant ID to use for authentication. If not specified, will use the tenant of the deployment subscription."
-      },
-      "type": "string"
-    },
-    "aadAdminGroupId": {
-      "defaultValue": "",
-      "metadata": {
-        "description": "The AAD default Admin group Object ID used to create a cluster-admin RBAC role."
-      },
-      "type": "string"
-    },
-{{end}}
 {{if IsHostedMaster}}
     "kubernetesEndpoint": {
       "metadata": {
@@ -191,35 +175,16 @@
       },
       "type": "string"
     },
-    "kubernetesKubeletClusterDomain": {
+    "kubeProxySpec": {
       "metadata": {
-        "description": "--cluster-domain Kubelet config"
+        "description": "The container spec for kube-proxy."
       },
       "type": "string"
     },
-    "kubernetesHyperkubeSpec": {
-      "metadata": {
-        "description": "The container spec for hyperkube."
-      },
-      "type": "string"
-    },
-    "privateAzureRegistryServer": {
+    "kubeBinaryURL": {
       "defaultValue": "",
       "metadata": {
-        "description": "The private Azure registry server for hyperkube."
-      },
-      "type": "string"
-    },
-    "kubernetesCcmImageSpec": {
-      "defaultValue": "",
-      "metadata": {
-        "description": "The container spec for cloud-controller-manager."
-      },
-      "type": "string"
-    },
-    "kubernetesAddonManagerSpec": {
-      "metadata": {
-        "description": "The container spec for hyperkube."
+        "description": "The package tarball URL to extract kubelet and kubectl binaries from."
       },
       "type": "string"
     },
@@ -229,20 +194,6 @@
       },
       "defaultValue": false,
       "type": "bool"
-    },
-{{if NeedsKubeDNSWithExecHealthz}}
-    "kubernetesExecHealthzSpec": {
-      "metadata": {
-        "description": "The container spec for exechealthz-amd64."
-      },
-      "type": "string"
-    },
-{{end}}
-    "kubernetesDNSSidecarSpec": {
-      "metadata": {
-        "description": "The container spec for k8s-dns-sidecar-amd64."
-      },
-      "type": "string"
     },
 {{if .OrchestratorProfile.KubernetesConfig.IsAADPodIdentityEnabled}}
     "kubernetesAADPodIdentityEnabled": {
@@ -259,32 +210,6 @@
       },
       "type": "bool"
     },
-    "kubernetesClusterAutoscalerEnabled": {
-      "metadata": {
-        "description": "Cluster autoscaler status"
-      },
-      "type": "bool"
-    },
-{{if .OrchestratorProfile.KubernetesConfig.IsClusterAutoscalerEnabled}}
-    "kubernetesClusterAutoscalerAzureCloud": {
-      "metadata": {
-        "description": "Name of the Azure cloud for the cluster autoscaler."
-      },
-      "type": "string"
-    },
-    "kubernetesClusterAutoscalerUseManagedIdentity": {
-      "metadata": {
-        "description": "Managed identity for the cluster autoscaler addon"
-      },
-      "type": "string"
-    },
-{{end}}
-    "kubernetesPodInfraContainerSpec": {
-      "metadata": {
-        "description": "The container spec for pod infra."
-      },
-      "type": "string"
-    },
     "cloudproviderConfig": {
       "type": "object",
       "defaultValue": {
@@ -298,32 +223,12 @@
         "cloudProviderRateLimitQPS": "0",
         "cloudProviderRateLimitQPSWrite": "0",
         "cloudProviderRateLimitBucket": 0,
-        "cloudProviderRateLimitBucketWrite": 0
+        "cloudProviderRateLimitBucketWrite": 0,
+        "cloudProviderDisableOutboundSNAT": false
       }
     },
-{{if IsKubernetesVersionGe "1.12.0"}}
-    "kubernetesCoreDNSSpec": {
-      "metadata": {
-        "description": "The container spec for coredns"
-      },
-      "type": "string"
-    },
-{{else}}
-    "kubernetesKubeDNSSpec": {
-      "metadata": {
-        "description": "The container spec for kubedns-amd64."
-      },
-      "type": "string"
-    },
-    "kubernetesDNSMasqSpec": {
-      "metadata": {
-        "description": "The container spec for kube-dnsmasq-amd64."
-      },
-      "type": "string"
-    },
-{{end}}
     "mobyVersion": {
-      "defaultValue": "3.0.7",
+      "defaultValue": "3.0.10",
       "metadata": {
         "description": "The Azure Moby build version"
       },
@@ -334,46 +239,60 @@
          "3.0.4",
          "3.0.5",
          "3.0.6",
-         "3.0.7"
+         "3.0.7",
+         "3.0.8",
+         "3.0.10"
        ],
       "type": "string"
     },
     "containerdVersion": {
-      "defaultValue": "1.1.5",
+      "defaultValue": "1.3.2",
       "metadata": {
         "description": "The Azure Moby build version"
       },
       "allowedValues": [
-         "1.1.5",
-         "1.1.6",
-         "1.2.4"
+         "1.3.2"
        ],
       "type": "string"
     },
     "networkPolicy": {
       "defaultValue": "{{.OrchestratorProfile.KubernetesConfig.NetworkPolicy}}",
       "metadata": {
-        "description": "The network policy enforcement to use (calico|cilium); 'none' and 'azure' here for backwards compatibility"
+        "description": "The network policy enforcement to use (calico|cilium|antrea); 'none' and 'azure' here for backwards compatibility"
       },
       "allowedValues": [
         "",
         "none",
         "azure",
         "calico",
-        "cilium"
+        "cilium",
+        "antrea"
       ],
       "type": "string"
     },
     "networkPlugin": {
       "defaultValue": "{{.OrchestratorProfile.KubernetesConfig.NetworkPlugin}}",
       "metadata": {
-        "description": "The network plugin to use for Kubernetes (kubenet|azure|flannel|cilium)"
+        "description": "The network plugin to use for Kubernetes (kubenet|azure|flannel|cilium|antrea)"
       },
       "allowedValues": [
         "kubenet",
         "azure",
         "flannel",
-        "cilium"
+        "cilium",
+        "antrea"
+      ],
+      "type": "string"
+    },
+    "networkMode": {
+      "defaultValue": "{{.OrchestratorProfile.KubernetesConfig.NetworkMode}}",
+      "metadata": {
+        "description": "The network mode to use for CNI (transparent|bridge)"
+      },
+      "allowedValues": [
+        "",
+        "transparent",
+        "bridge"
       ],
       "type": "string"
     },
@@ -394,15 +313,15 @@
       "type": "string"
     },
     "cniPluginsURL": {
-      "defaultValue": "https://acs-mirror.azureedge.net/cni/cni-plugins-amd64-latest.tgz",
+      "defaultValue": "https://kubernetesartifacts.azureedge.net/cni-plugins/v0.7.6/binaries/cni-plugins-amd64-v0.7.6.tgz",
       "type": "string"
     },
     "vnetCniLinuxPluginsURL": {
-      "defaultValue": "https://acs-mirror.azureedge.net/cni/azure-vnet-cni-linux-amd64-latest.tgz",
+      "defaultValue": "https://kubernetesartifacts.azureedge.net/azure-cni/v1.0.30/binaries/azure-vnet-cni-linux-amd64-v1.0.30.tgz",
       "type": "string"
     },
     "vnetCniWindowsPluginsURL": {
-      "defaultValue": "https://acs-mirror.azureedge.net/cni/azure-vnet-cni-windows-amd64-latest.zip",
+      "defaultValue": "https://kubernetesartifacts.azureedge.net/azure-cni/v1.0.30/binaries/azure-vnet-cni-windows-amd64-v1.0.30.zip",
       "type": "string"
     },
     "maxPods": {
@@ -544,30 +463,7 @@
       "type": "string"
     }
 {{end}}
-{{if HasLinuxProfile}}{{if HasCustomSearchDomain}}
-    ,"searchDomainName": {
-      "defaultValue": "",
-      "metadata": {
-        "description": "Custom Search Domain name."
-      },
-      "type": "string"
-    },
-    "searchDomainRealmUser": {
-      "defaultValue": "",
-      "metadata": {
-        "description": "Windows server AD user name to join the Linux Machines with active directory and be able to change dns registries."
-      },
-      "type": "string"
-    },
-    "searchDomainRealmPassword": {
-      "defaultValue": "",
-      "metadata": {
-        "description": "Windows server AD user password to join the Linux Machines with active directory and be able to change dns registries."
-      },
-      "type": "securestring"
-    }
-{{end}}{{end}}
-{{if HasLinuxProfile}}{{if HasCustomNodesDNS}}
+{{if HasCustomNodesDNS}}
     ,"dnsServer": {
       "defaultValue": "",
       "metadata": {
@@ -575,7 +471,7 @@
       },
       "type": "string"
     }
-{{end}}{{end}}
+{{end}}
 
 {{if EnableEncryptionWithExternalKms}}
    ,

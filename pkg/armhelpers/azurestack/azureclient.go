@@ -22,6 +22,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2017-10-01/network"
 	"github.com/Azure/azure-sdk-for-go/services/preview/msi/mgmt/2015-08-31-preview/msi"
 	"github.com/Azure/azure-sdk-for-go/services/preview/operationalinsights/mgmt/2015-11-01-preview/operationalinsights"
+	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2016-06-01/subscriptions"
 	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2018-05-01/resources"
 	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2017-10-01/storage"
 	"github.com/Azure/go-autorest/autorest"
@@ -58,6 +59,7 @@ type AzureClient struct {
 	storageAccountsClient           storage.AccountsClient
 	interfacesClient                network.InterfacesClient
 	groupsClient                    resources.GroupsClient
+	subscriptionsClient             subscriptions.Client
 	providersClient                 resources.ProvidersClient
 	virtualMachinesClient           compute.VirtualMachinesClient
 	virtualMachineScaleSetsClient   compute.VirtualMachineScaleSetsClient
@@ -66,6 +68,7 @@ type AzureClient struct {
 	disksClient                     compute.DisksClient
 	availabilitySetsClient          compute.AvailabilitySetsClient
 	workspacesClient                operationalinsights.WorkspacesClient
+	virtualMachineImagesClient      compute.VirtualMachineImagesClient
 
 	applicationsClient      graphrbac.ApplicationsClient
 	servicePrincipalsClient graphrbac.ServicePrincipalsClient
@@ -210,6 +213,7 @@ func getClient(env azure.Environment, subscriptionID, tenantID string, armAuthor
 		storageAccountsClient:           storage.NewAccountsClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
 		interfacesClient:                network.NewInterfacesClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
 		groupsClient:                    resources.NewGroupsClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
+		subscriptionsClient:             subscriptions.NewClientWithBaseURI(env.ResourceManagerEndpoint),
 		providersClient:                 resources.NewProvidersClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
 		virtualMachinesClient:           compute.NewVirtualMachinesClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
 		virtualMachineScaleSetsClient:   compute.NewVirtualMachineScaleSetsClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
@@ -218,6 +222,7 @@ func getClient(env azure.Environment, subscriptionID, tenantID string, armAuthor
 		disksClient:                     compute.NewDisksClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
 		availabilitySetsClient:          compute.NewAvailabilitySetsClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
 		workspacesClient:                operationalinsights.NewWorkspacesClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
+		virtualMachineImagesClient:      compute.NewVirtualMachineImagesClientWithBaseURI(env.ResourceManagerEndpoint, subscriptionID),
 
 		applicationsClient:      graphrbac.NewApplicationsClientWithBaseURI(env.GraphEndpoint, tenantID),
 		servicePrincipalsClient: graphrbac.NewServicePrincipalsClientWithBaseURI(env.GraphEndpoint, tenantID),
@@ -231,6 +236,7 @@ func getClient(env azure.Environment, subscriptionID, tenantID string, armAuthor
 	c.storageAccountsClient.Authorizer = armAuthorizer
 	c.interfacesClient.Authorizer = armAuthorizer
 	c.groupsClient.Authorizer = armAuthorizer
+	c.subscriptionsClient.Authorizer = armAuthorizer
 	c.providersClient.Authorizer = armAuthorizer
 	c.virtualMachinesClient.Authorizer = armAuthorizer
 	c.virtualMachineScaleSetsClient.Authorizer = armAuthorizer
@@ -238,6 +244,7 @@ func getClient(env azure.Environment, subscriptionID, tenantID string, armAuthor
 	c.disksClient.Authorizer = armAuthorizer
 	c.availabilitySetsClient.Authorizer = armAuthorizer
 	c.workspacesClient.Authorizer = armAuthorizer
+	c.virtualMachineImagesClient.Authorizer = armAuthorizer
 
 	c.deploymentsClient.PollingDelay = time.Second * 5
 	c.resourcesClient.PollingDelay = time.Second * 5
@@ -249,6 +256,7 @@ func getClient(env azure.Environment, subscriptionID, tenantID string, armAuthor
 	c.authorizationClient.PollingDuration = DefaultARMOperationTimeout
 	c.disksClient.PollingDuration = DefaultARMOperationTimeout
 	c.groupsClient.PollingDuration = DefaultARMOperationTimeout
+	c.subscriptionsClient.PollingDuration = DefaultARMOperationTimeout
 	c.interfacesClient.PollingDuration = DefaultARMOperationTimeout
 	c.providersClient.PollingDuration = DefaultARMOperationTimeout
 	c.resourcesClient.PollingDuration = DefaultARMOperationTimeout
@@ -355,6 +363,7 @@ func (az *AzureClient) AddAcceptLanguages(languages []string) {
 	az.storageAccountsClient.Client.RequestInspector = az.addAcceptLanguages()
 	az.interfacesClient.Client.RequestInspector = az.addAcceptLanguages()
 	az.groupsClient.Client.RequestInspector = az.addAcceptLanguages()
+	az.subscriptionsClient.Client.RequestInspector = az.addAcceptLanguages()
 	az.providersClient.Client.RequestInspector = az.addAcceptLanguages()
 	az.virtualMachinesClient.Client.RequestInspector = az.addAcceptLanguages()
 	az.virtualMachineScaleSetsClient.Client.RequestInspector = az.addAcceptLanguages()
@@ -418,6 +427,7 @@ func (az *AzureClient) AddAuxiliaryTokens(tokens []string) {
 	az.storageAccountsClient.Client.RequestInspector = requestWithTokens
 	az.interfacesClient.Client.RequestInspector = requestWithTokens
 	az.groupsClient.Client.RequestInspector = requestWithTokens
+	az.subscriptionsClient.Client.RequestInspector = requestWithTokens
 	az.providersClient.Client.RequestInspector = requestWithTokens
 	az.virtualMachinesClient.Client.RequestInspector = requestWithTokens
 	az.virtualMachineScaleSetsClient.Client.RequestInspector = requestWithTokens

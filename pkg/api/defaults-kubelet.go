@@ -79,10 +79,10 @@ func (cs *ContainerService) setKubeletConfig(isUpgrade bool) {
 	defaultKubeletConfig := map[string]string{
 		"--cluster-domain":                    "cluster.local",
 		"--network-plugin":                    "cni",
-		"--pod-infra-container-image":         o.KubernetesConfig.MCRKubernetesImageBase + K8sComponentsByVersionMap[o.OrchestratorVersion]["pause"],
+		"--pod-infra-container-image":         o.KubernetesConfig.MCRKubernetesImageBase + GetK8sComponentsByVersionMap(o.KubernetesConfig)[o.OrchestratorVersion][common.PauseComponentName],
 		"--max-pods":                          strconv.Itoa(DefaultKubernetesMaxPods),
 		"--eviction-hard":                     DefaultKubernetesHardEvictionThreshold,
-		"--node-status-update-frequency":      K8sComponentsByVersionMap[o.OrchestratorVersion]["nodestatusfreq"],
+		"--node-status-update-frequency":      GetK8sComponentsByVersionMap(o.KubernetesConfig)[o.OrchestratorVersion]["nodestatusfreq"],
 		"--image-gc-high-threshold":           strconv.Itoa(DefaultKubernetesGCHighThreshold),
 		"--image-gc-low-threshold":            strconv.Itoa(DefaultKubernetesGCLowThreshold),
 		"--non-masquerade-cidr":               DefaultNonMasqueradeCIDR,
@@ -95,10 +95,12 @@ func (cs *ContainerService) setKubeletConfig(isUpgrade bool) {
 		"--image-pull-progress-deadline":      "30m",
 		"--enforce-node-allocatable":          "pods",
 		"--streaming-connection-idle-timeout": "4h",
+		"--tls-cipher-suites":                 TLSStrongCipherSuitesKubelet,
 	}
 
-	// Set --non-masquerade-cidr if ip-masq-agent is disabled on AKS
-	if !cs.Properties.IsIPMasqAgentEnabled() {
+	// Set --non-masquerade-cidr if ip-masq-agent is disabled on AKS or
+	// explicitly disabled in kubernetes config
+	if cs.Properties.IsIPMasqAgentDisabled() {
 		defaultKubeletConfig["--non-masquerade-cidr"] = cs.Properties.OrchestratorProfile.KubernetesConfig.ClusterSubnet
 	}
 
@@ -112,11 +114,6 @@ func (cs *ContainerService) setKubeletConfig(isUpgrade bool) {
 		defaultKubeletConfig["--rotate-certificates"] = "true"
 	}
 
-	// Disable Weak TLS Cipher Suites for 1.10 and above
-	if common.IsKubernetesVersionGe(o.OrchestratorVersion, "1.10.0") {
-		defaultKubeletConfig["--tls-cipher-suites"] = TLSStrongCipherSuitesKubelet
-	}
-
 	if common.IsKubernetesVersionGe(o.OrchestratorVersion, "1.16.0") {
 		// for enabling metrics-server v0.3.0+
 		defaultKubeletConfig["--authentication-token-webhook"] = "true"
@@ -127,7 +124,6 @@ func (cs *ContainerService) setKubeletConfig(isUpgrade bool) {
 
 	// If no user-configurable kubelet config values exists, use the defaults
 	setMissingKubeletValues(o.KubernetesConfig, defaultKubeletConfig)
-	addDefaultFeatureGates(o.KubernetesConfig.KubeletConfig, o.OrchestratorVersion, "1.8.0", "PodPriority=true")
 	addDefaultFeatureGates(o.KubernetesConfig.KubeletConfig, o.OrchestratorVersion, minVersionRotateCerts, "RotateKubeletServerCertificate=true")
 
 	// Override default cloud-provider?
@@ -186,6 +182,16 @@ func (cs *ContainerService) setKubeletConfig(isUpgrade bool) {
 				}
 			}
 		}
+		// "--protect-kernel-defaults" is only true for VHD based VMs since the base Ubuntu distros don't have a /etc/sysctl.d/60-CIS.conf file.
+		if cs.Properties.MasterProfile.IsVHDDistro() {
+			if _, ok := cs.Properties.MasterProfile.KubernetesConfig.KubeletConfig["--protect-kernel-defaults"]; !ok {
+				cs.Properties.MasterProfile.KubernetesConfig.KubeletConfig["--protect-kernel-defaults"] = "true"
+			}
+		}
+		// Override the --resolv-conf kubelet config value for Ubuntu 18.04 after the distro value is set.
+		if cs.Properties.MasterProfile.IsUbuntu1804() {
+			cs.Properties.MasterProfile.KubernetesConfig.KubeletConfig["--resolv-conf"] = "/run/systemd/resolve/resolv.conf"
+		}
 
 		removeKubeletFlags(cs.Properties.MasterProfile.KubernetesConfig.KubeletConfig, o.OrchestratorVersion)
 	}
@@ -209,14 +215,6 @@ func (cs *ContainerService) setKubeletConfig(isUpgrade bool) {
 
 		setMissingKubeletValues(profile.KubernetesConfig, o.KubernetesConfig.KubeletConfig)
 
-		// For N Series (GPU) VMs
-		if strings.Contains(profile.VMSize, "Standard_N") {
-			if !cs.Properties.IsNVIDIADevicePluginEnabled() && !common.IsKubernetesVersionGe(o.OrchestratorVersion, "1.11.0") {
-				// enabling accelerators for Kubernetes >= 1.6 to <= 1.9
-				addDefaultFeatureGates(profile.KubernetesConfig.KubeletConfig, o.OrchestratorVersion, "1.6.0", "Accelerators=true")
-			}
-		}
-
 		if isUpgrade && common.IsKubernetesVersionGe(o.OrchestratorVersion, "1.14.0") {
 			hasSupportPodPidsLimitFeatureGate := strings.Contains(profile.KubernetesConfig.KubeletConfig["--feature-gates"], "SupportPodPidsLimit=true")
 			podMaxPids, err := strconv.Atoi(profile.KubernetesConfig.KubeletConfig["--pod-max-pids"])
@@ -229,6 +227,17 @@ func (cs *ContainerService) setKubeletConfig(isUpgrade bool) {
 					profile.KubernetesConfig.KubeletConfig["--pod-max-pids"] = strconv.Itoa(-1)
 				}
 			}
+		}
+
+		// "--protect-kernel-defaults" is only true for VHD based VMs since the base Ubuntu distros don't have a /etc/sysctl.d/60-CIS.conf file.
+		if profile.IsVHDDistro() {
+			if _, ok := profile.KubernetesConfig.KubeletConfig["--protect-kernel-defaults"]; !ok {
+				profile.KubernetesConfig.KubeletConfig["--protect-kernel-defaults"] = "true"
+			}
+		}
+		// Override the --resolv-conf kubelet config value for Ubuntu 18.04 after the distro value is set.
+		if profile.IsUbuntu1804() {
+			profile.KubernetesConfig.KubeletConfig["--resolv-conf"] = "/run/systemd/resolve/resolv.conf"
 		}
 
 		removeKubeletFlags(profile.KubernetesConfig.KubeletConfig, o.OrchestratorVersion)

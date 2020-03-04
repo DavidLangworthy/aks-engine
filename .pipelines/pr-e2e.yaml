@@ -17,7 +17,7 @@ pr:
 resources:
   containers:
   - container: dev1
-    image: quay.io/deis/go-dev:v1.23.6
+    image: quay.io/deis/go-dev:v1.25.0
 
 jobs:
 - job: unit_tests
@@ -33,44 +33,36 @@ jobs:
   variables:
     GOBIN:  '$(GOPATH)/bin' # Go binaries path
     GOROOT: '/usr/local/go' # Go installation path
-    GOPATH: '$(system.defaultWorkingDirectory)/gopath' # Go workspace path
-    modulePath: '$(GOPATH)/src/github.com/$(build.repository.name)' # Path to the module's code
+    GOPATH: '$(Agent.TempDirectory)/go' # Go workspace path
 
   steps:
   - script: |
       mkdir -p '$(GOBIN)'
       mkdir -p '$(GOPATH)/pkg'
-      mkdir -p '$(modulePath)'
       shopt -s extglob
-      mv !(gopath) '$(modulePath)'
       echo '##vso[task.prependpath]$(GOBIN)'
       echo '##vso[task.prependpath]$(GOROOT)/bin'
     displayName: 'Set up the Go workspace'
   - script: make bootstrap
     displayName: Install dependencies
-    workingDirectory: $(modulePath)
   - script: make validate-dependencies
     displayName: Check if imports, Gopkg.toml, and Gopkg.lock are in sync
-    workingDirectory: $(modulePath)
   - script: make ensure-generated
     displayName: Check if generated code is up to date
-    workingDirectory: $(modulePath)
   - script: make generate test-style
     displayName: Run linting rules
-    workingDirectory: $(modulePath)
   - script: make build-cross
     displayName: Build cross-architectural binaries
-    workingDirectory: $(modulePath)
   - script: |
         export CODECOV_TOKEN=$(CODECOV_TOKEN)
         make coverage
     displayName: Run unit tests and calculate coverage
-    workingDirectory: $(modulePath)
 
 - template: e2e-job-template.yaml
   parameters:
     name: 'k8s_non_vhd_deployment'
     apimodel: 'examples/kubernetes-ubuntu-distro.json'
+    enableKMSEncryption: false
 
 - template: e2e-job-template.yaml
   parameters:
@@ -78,30 +70,7 @@ jobs:
     apimodel: 'examples/ubuntu-1804/kubernetes.json'
     skipTests: 'should have healthy time synchronization'
     stabilityIterations: '10'
-
-- template: e2e-job-template.yaml
-  parameters:
-    name: 'k8s_1_11_release_e2e'
-    k8sRelease: '1.11'
-    apimodel: 'examples/e2e-tests/kubernetes/release/default/definition.json'
-    createVNET: true
-    stabilityIterations: '3'
-
-- template: e2e-job-template.yaml
-  parameters:
-    name: 'k8s_1_12_release_e2e'
-    k8sRelease: '1.12'
-    apimodel: 'examples/e2e-tests/kubernetes/release/default/definition.json'
-    createVNET: true
-    stabilityIterations: '3'
-
-- template: e2e-job-template.yaml
-  parameters:
-    name: 'k8s_1_13_release_e2e'
-    k8sRelease: '1.13'
-    apimodel: 'examples/e2e-tests/kubernetes/release/default/definition.json'
-    createVNET: true
-    stabilityIterations: '3'
+    enableKMSEncryption: false
 
 - template: e2e-job-template.yaml
   parameters:
@@ -109,7 +78,7 @@ jobs:
     k8sRelease: '1.14'
     apimodel: 'examples/e2e-tests/kubernetes/release/default/definition.json'
     createVNET: true
-    stabilityIterations: '3'
+    enableKMSEncryption: true
 
 - template: e2e-job-template.yaml
   parameters:
@@ -117,7 +86,7 @@ jobs:
     k8sRelease: '1.15'
     apimodel: 'examples/e2e-tests/kubernetes/release/default/definition.json'
     createVNET: true
-    stabilityIterations: '3'
+    enableKMSEncryption: true
 
 - template: e2e-job-template.yaml
   parameters:
@@ -125,7 +94,7 @@ jobs:
     k8sRelease: '1.16'
     apimodel: 'examples/e2e-tests/kubernetes/release/default/definition.json'
     createVNET: true
-    stabilityIterations: '3'
+    enableKMSEncryption: true
 
 - template: e2e-job-template.yaml
   parameters:
@@ -133,40 +102,12 @@ jobs:
     k8sRelease: '1.17'
     apimodel: 'examples/e2e-tests/kubernetes/release/default/definition.json'
     createVNET: true
-    stabilityIterations: '3'
+    enableKMSEncryption: true
 
 - template: e2e-job-template.yaml
   parameters:
-    name: 'k8s_windows_1_12_release_e2e'
-    k8sRelease: '1.12'
-    apimodel: 'examples/e2e-tests/kubernetes/windows/hybrid/definition.json'
-
-- template: e2e-job-template.yaml
-  parameters:
-    name: 'k8s_windows_1_13_release_e2e'
-    k8sRelease: '1.13'
-    apimodel: 'examples/e2e-tests/kubernetes/windows/hybrid/definition.json'
-
-- template: e2e-job-template.yaml
-  parameters:
-    name: 'k8s_windows_1_14_release_e2e'
-    k8sRelease: '1.14'
-    apimodel: 'examples/e2e-tests/kubernetes/windows/hybrid/definition.json'
-
-- template: e2e-job-template.yaml
-  parameters:
-    name: 'k8s_windows_1_15_release_e2e'
-    k8sRelease: '1.15'
-    apimodel: 'examples/e2e-tests/kubernetes/windows/hybrid/definition.json'
-
-- template: e2e-job-template.yaml
-  parameters:
-    name: 'k8s_windows_1_16_release_e2e'
-    k8sRelease: '1.16'
-    apimodel: 'examples/e2e-tests/kubernetes/windows/hybrid/definition.json'
-
-- template: e2e-job-template.yaml
-  parameters:
-    name: 'k8s_windows_1_17_release_e2e'
-    k8sRelease: '1.17'
-    apimodel: 'examples/e2e-tests/kubernetes/windows/hybrid/definition.json'
+    name: 'k8s_1_18_release_e2e'
+    k8sRelease: '1.18'
+    apimodel: 'examples/e2e-tests/kubernetes/release/default/definition.json'
+    createVNET: true
+    enableKMSEncryption: false

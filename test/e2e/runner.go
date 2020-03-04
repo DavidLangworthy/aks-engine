@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Azure/aks-engine/test/e2e/azure"
@@ -59,12 +60,12 @@ func main() {
 		log.Fatalf("Error while trying to setup azure account: %s\n", err)
 	}
 
-	err := acct.LoginWithRetry(3*time.Second, cfg.Timeout)
+	err := acct.Login()
 	if err != nil {
 		log.Fatalf("Error while trying to login to azure account! %s\n", err)
 	}
 
-	err = acct.SetSubscriptionWithRetry(3*time.Second, cfg.Timeout)
+	err = acct.SetSubscription()
 	if err != nil {
 		log.Fatal("Error while trying to set azure subscription!")
 	}
@@ -76,6 +77,23 @@ func main() {
 	cliProvisioner, err = runner.BuildCLIProvisioner(cfg, acct, pt)
 	if err != nil {
 		log.Fatalf("Error while trying to build CLI Provisioner:%s", err)
+	}
+	if cliProvisioner.Config.Name != "" {
+		// Store the hosts for future introspection
+		hosts, err := cliProvisioner.Account.GetHosts(cliProvisioner.Config.Name)
+		if err != nil {
+			log.Fatalf("Error while trying to get hosts in resource group:%s", err)
+		}
+		var masters, agents []azure.VM
+		for _, host := range hosts {
+			if strings.Contains(host.Name, "master") {
+				masters = append(masters, host)
+			} else if strings.Contains(host.Name, "agent") {
+				agents = append(agents, host)
+			}
+		}
+		cliProvisioner.Masters = masters
+		cliProvisioner.Agents = agents
 	}
 
 	sa := acct.StorageAccount
@@ -96,7 +114,7 @@ func main() {
 		provision := true
 		rgExists := true
 		rg := cfg.SoakClusterName
-		err = acct.SetResourceGroupWithRetry(rg, 3*time.Second, 20*time.Second)
+		err = acct.SetResourceGroup(rg)
 		if err != nil {
 			rgExists = false
 			log.Printf("Error while trying to set RG:%s\n", err)
@@ -113,7 +131,7 @@ func main() {
 			log.Printf("Soak cluster %s does not exist or has expired\n", rg)
 			if rgExists {
 				log.Printf("Deleting Resource Group:%s\n", rg)
-				acct.DeleteGroupWithRetry(rg, true, 3*time.Second, cfg.Timeout)
+				acct.DeleteGroup(rg, true)
 			}
 			log.Printf("Deleting Storage files:%s\n", rg)
 			sa.DeleteFiles(cfg.SoakClusterName)
@@ -124,7 +142,7 @@ func main() {
 			if err != nil {
 				log.Printf("Error while trying to download _output dir: %s, will provision a new cluster.\n", err)
 				log.Printf("Deleting Resource Group:%s\n", rg)
-				acct.DeleteGroupWithRetry(rg, true, 3*time.Second, cfg.Timeout)
+				acct.DeleteGroup(rg, true)
 				log.Printf("Deleting Storage files:%s\n", rg)
 				sa.DeleteFiles(cfg.SoakClusterName)
 				cfg.Name = ""
@@ -254,7 +272,7 @@ func teardown() {
 	if cfg.CleanUpOnExit {
 		for _, rg := range rgs {
 			log.Printf("Deleting Group:%s\n", rg)
-			acct.DeleteGroupWithRetry(rg, false, 3*time.Second, cfg.Timeout)
+			acct.DeleteGroup(rg, false)
 		}
 	}
 }

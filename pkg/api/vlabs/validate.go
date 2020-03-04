@@ -13,30 +13,31 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/go-autorest/autorest/to"
-
 	"github.com/Azure/aks-engine/pkg/api/common"
 	"github.com/Azure/aks-engine/pkg/helpers"
+	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/blang/semver"
-	"github.com/gofrs/uuid"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	validator "gopkg.in/go-playground/validator.v9"
 )
 
 var (
-	validate        *validator.Validate
-	keyvaultIDRegex *regexp.Regexp
-	labelValueRegex *regexp.Regexp
-	labelKeyRegex   *regexp.Regexp
-	// Any version has to be mirrored in https://acs-mirror.azureedge.net/github-coreos/etcd-v[Version]-linux-amd64.tar.gz
+	validate                 *validator.Validate
+	keyvaultIDRegex          *regexp.Regexp
+	labelValueRegex          *regexp.Regexp
+	labelKeyRegex            *regexp.Regexp
+	diskEncryptionSetIDRegex *regexp.Regexp
+	// Any version has to be available in a container image from mcr.microsoft.com/oss/etcd-io/etcd:v[Version]
 	etcdValidVersions = [...]string{"2.2.5", "2.3.0", "2.3.1", "2.3.2", "2.3.3", "2.3.4", "2.3.5", "2.3.6", "2.3.7", "2.3.8",
 		"3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.0.5", "3.0.6", "3.0.7", "3.0.8", "3.0.9", "3.0.10", "3.0.11", "3.0.12", "3.0.13", "3.0.14", "3.0.15", "3.0.16", "3.0.17",
 		"3.1.0", "3.1.1", "3.1.2", "3.1.2", "3.1.3", "3.1.4", "3.1.5", "3.1.6", "3.1.7", "3.1.8", "3.1.9", "3.1.10",
 		"3.2.0", "3.2.1", "3.2.2", "3.2.3", "3.2.4", "3.2.5", "3.2.6", "3.2.7", "3.2.8", "3.2.9", "3.2.11", "3.2.12",
-		"3.2.13", "3.2.14", "3.2.15", "3.2.16", "3.2.23", "3.2.24", "3.2.25", "3.2.26", "3.3.0", "3.3.1", "3.3.8", "3.3.9", "3.3.10", "3.3.13", "3.3.15"}
-	containerdValidVersions        = [...]string{"1.1.5", "1.1.6", "1.2.4"}
-	networkPluginPlusPolicyAllowed = []k8sNetworkConfig{
+		"3.2.13", "3.2.14", "3.2.15", "3.2.16", "3.2.23", "3.2.24", "3.2.25", "3.2.26", "3.3.0", "3.3.1", "3.3.8", "3.3.9", "3.3.10", "3.3.13", "3.3.15", "3.3.18"}
+	containerdValidVersions              = [...]string{"1.3.2"}
+	kubernetesImageBaseTypeValidVersions = [...]string{"", common.KubernetesImageBaseTypeGCR, common.KubernetesImageBaseTypeMCR}
+	networkPluginPlusPolicyAllowed       = []k8sNetworkConfig{
 		{
 			networkPlugin: "",
 			networkPolicy: "",
@@ -58,10 +59,6 @@ var (
 			networkPolicy: "",
 		},
 		{
-			networkPlugin: NetworkPolicyCilium,
-			networkPolicy: "",
-		},
-		{
 			networkPlugin: NetworkPluginCilium,
 			networkPolicy: NetworkPolicyCilium,
 		},
@@ -80,6 +77,14 @@ var (
 		{
 			networkPlugin: "",
 			networkPolicy: NetworkPolicyCilium,
+		},
+		{
+			networkPlugin: NetworkPluginAntrea,
+			networkPolicy: NetworkPolicyAntrea,
+		},
+		{
+			networkPlugin: "",
+			networkPolicy: NetworkPolicyAntrea,
 		},
 		{
 			networkPlugin: "",
@@ -108,6 +113,7 @@ func init() {
 	keyvaultIDRegex = regexp.MustCompile(`^/subscriptions/\S+/resourceGroups/\S+/providers/Microsoft.KeyVault/vaults/[^/\s]+$`)
 	labelValueRegex = regexp.MustCompile(labelValueFormat)
 	labelKeyRegex = regexp.MustCompile(labelKeyFormat)
+	diskEncryptionSetIDRegex = regexp.MustCompile(`^/subscriptions/\S+/resourceGroups/\S+/providers/Microsoft.Compute/diskEncryptionSets/[^/\s]+$`)
 }
 
 // Validate implements APIObject
@@ -151,7 +157,15 @@ func (a *Properties) validate(isUpdate bool) error {
 		return e
 	}
 
-	if e := a.validateFeatureFlags(); e != nil {
+	if e := a.validateCustomKubeComponent(); e != nil {
+		return e
+	}
+
+	if e := a.validatePrivateAzureRegistryServer(); e != nil {
+		return e
+	}
+
+	if e := a.validateAzureStackSupport(); e != nil {
 		return e
 	}
 	return nil
@@ -229,11 +243,6 @@ func (a *Properties) ValidateOrchestratorProfile(isUpdate bool) error {
 				}
 
 				if o.KubernetesConfig.EnableAggregatedAPIs {
-					if sv.LT(minVersion) {
-						return errors.Errorf("enableAggregatedAPIs is only available in Kubernetes version %s or greater; unable to validate for Kubernetes version %s",
-							minVersion.String(), version)
-					}
-
 					if !o.KubernetesConfig.IsRBACEnabled() {
 						return errors.New("enableAggregatedAPIs requires the enableRbac feature as a prerequisite")
 					}
@@ -275,16 +284,9 @@ func (a *Properties) ValidateOrchestratorProfile(isUpdate bool) error {
 				}
 
 				if to.Bool(o.KubernetesConfig.EnablePodSecurityPolicy) {
+					log.Warnf("EnablePodSecurityPolicy is deprecated in favor of the addon pod-security-policy.")
 					if !o.KubernetesConfig.IsRBACEnabled() {
 						return errors.Errorf("enablePodSecurityPolicy requires the enableRbac feature as a prerequisite")
-					}
-					minVersion, err := semver.Make("1.8.0")
-					if err != nil {
-						return errors.Errorf("could not validate version")
-					}
-					if sv.LT(minVersion) {
-						return errors.Errorf("enablePodSecurityPolicy is only supported in aks-engine for Kubernetes version %s or greater; unable to validate for Kubernetes version %s",
-							minVersion.String(), version)
 					}
 					if len(o.KubernetesConfig.PodSecurityPolicyConfig) > 0 {
 						log.Warnf("Raw manifest for PodSecurityPolicy using PodSecurityPolicyConfig is deprecated in favor of the addon pod-security-policy. This will be ignored.")
@@ -447,7 +449,6 @@ func (a *Properties) validateAgentPoolProfiles(isUpdate bool) error {
 
 	profileNames := make(map[string]bool)
 	for i, agentPoolProfile := range a.AgentPoolProfiles {
-
 		if e := validatePoolName(agentPoolProfile.Name); e != nil {
 			return e
 		}
@@ -475,6 +476,8 @@ func (a *Properties) validateAgentPoolProfiles(isUpdate bool) error {
 		if to.Bool(agentPoolProfile.AcceleratedNetworkingEnabled) || to.Bool(agentPoolProfile.AcceleratedNetworkingEnabledWindows) {
 			if a.IsAzureStackCloud() {
 				return errors.Errorf("AcceleratedNetworkingEnabled or AcceleratedNetworkingEnabledWindows shouldn't be set to true as feature is not yet supported on Azure Stack")
+			} else if to.Bool(agentPoolProfile.AcceleratedNetworkingEnabledWindows) {
+				return errors.Errorf("Accelerated Networking is currently unstable for Windows + Kubernetes, please set acceleratedNetworkingEnabledWindows to false")
 			} else if e := validatePoolAcceleratedNetworking(agentPoolProfile.VMSize); e != nil {
 				return e
 			}
@@ -608,6 +611,8 @@ func (a *Properties) validateAddons() error {
 	if a.OrchestratorProfile.KubernetesConfig != nil && a.OrchestratorProfile.KubernetesConfig.Addons != nil {
 		var isAvailabilitySets bool
 		var IsNSeriesSKU bool
+		var kubeDNSEnabled bool
+		var corednsEnabled bool
 
 		for _, agentPool := range a.AgentPoolProfiles {
 			if agentPool.IsAvailabilitySets() {
@@ -628,51 +633,74 @@ func (a *Properties) validateAddons() error {
 				}
 			}
 
-			switch addon.Name {
-			case "cluster-autoscaler":
-				if to.Bool(addon.Enabled) && isAvailabilitySets {
-					return errors.Errorf("Cluster Autoscaler add-on can only be used with VirtualMachineScaleSets. Please specify \"availabilityProfile\": \"%s\"", VirtualMachineScaleSets)
+			if addon.Mode != "" {
+				if addon.Mode != AddonModeEnsureExists && addon.Mode != AddonModeReconcile {
+					return errors.Errorf("addon %s has a mode configuration '%s', must be either %s or %s", addon.Name, addon.Mode, AddonModeEnsureExists, AddonModeReconcile)
 				}
-			case "nvidia-device-plugin":
-				if to.Bool(addon.Enabled) {
-					version := common.RationalizeReleaseAndVersion(
-						a.OrchestratorProfile.OrchestratorType,
-						a.OrchestratorProfile.OrchestratorRelease,
-						a.OrchestratorProfile.OrchestratorVersion,
-						false,
-						false)
-					if version == "" {
-						return errors.Errorf("the following user supplied OrchestratorProfile configuration is not supported: OrchestratorType: %s, OrchestratorRelease: %s, OrchestratorVersion: %s. Please check supported Release or Version for this build of aks-engine", a.OrchestratorProfile.OrchestratorType, a.OrchestratorProfile.OrchestratorRelease, a.OrchestratorProfile.OrchestratorVersion)
+			}
+
+			// Validation for addons if they are enabled
+			if to.Bool(addon.Enabled) {
+				switch addon.Name {
+				case "cluster-autoscaler":
+					if isAvailabilitySets {
+						return errors.Errorf("cluster-autoscaler addon can only be used with VirtualMachineScaleSets. Please specify \"availabilityProfile\": \"%s\"", VirtualMachineScaleSets)
 					}
-					sv, err := semver.Make(version)
+					for _, pool := range addon.Pools {
+						if pool.Name == "" {
+							return errors.Errorf("cluster-autoscaler addon pools configuration must have a 'name' property that correlates with a pool name in the agentPoolProfiles array")
+						}
+						if a.GetAgentPoolByName(pool.Name) == nil {
+							return errors.Errorf("cluster-autoscaler addon pool 'name' %s does not match any agentPoolProfiles nodepool name", pool.Name)
+						}
+						if pool.Config != nil {
+							var min, max int
+							var err error
+							if pool.Config["min-nodes"] != "" {
+								min, err = strconv.Atoi(pool.Config["min-nodes"])
+								if err != nil {
+									return errors.Errorf("cluster-autoscaler addon pool 'name' %s has invalid 'min-nodes' config, must be a string int, got %s", pool.Name, pool.Config["min-nodes"])
+								}
+							}
+							if pool.Config["max-nodes"] != "" {
+								max, err = strconv.Atoi(pool.Config["max-nodes"])
+								if err != nil {
+									return errors.Errorf("cluster-autoscaler addon pool 'name' %s has invalid 'max-nodes' config, must be a string int, got %s", pool.Name, pool.Config["max-nodes"])
+								}
+							}
+							if min > max {
+								return errors.Errorf("cluster-autoscaler addon pool 'name' %s has invalid config, 'max-nodes' %d must be greater than or equal to 'min-nodes' %d", pool.Name, max, min)
+							}
+						}
+					}
+				case "nvidia-device-plugin":
+					isValidVersion, err := common.IsValidMinVersion(a.OrchestratorProfile.OrchestratorType, a.OrchestratorProfile.OrchestratorRelease, a.OrchestratorProfile.OrchestratorVersion, "1.10.0")
 					if err != nil {
-						return errors.Errorf("could not validate version %s", version)
+						return err
 					}
-					minVersion, err := semver.Make("1.10.0")
-					if err != nil {
-						return errors.New("could not validate version")
-					}
-					if IsNSeriesSKU && sv.LT(minVersion) {
+					if IsNSeriesSKU && !isValidVersion {
 						return errors.New("NVIDIA Device Plugin add-on can only be used Kubernetes 1.10 or above. Please specify \"orchestratorRelease\": \"1.10\"")
 					}
 					if a.HasCoreOS() {
 						return errors.New("NVIDIA Device Plugin add-on not currently supported on coreos. Please use node pools with Ubuntu only")
 					}
-				}
-			case "blobfuse-flexvolume":
-				if to.Bool(addon.Enabled) && a.HasCoreOS() {
-					return errors.New("flexvolume add-ons not currently supported on coreos distro. Please use Ubuntu")
-				}
-			case "smb-flexvolume":
-				if to.Bool(addon.Enabled) && a.HasCoreOS() {
-					return errors.New("flexvolume add-ons not currently supported on coreos distro. Please use Ubuntu")
-				}
-			case "keyvault-flexvolume":
-				if to.Bool(addon.Enabled) && a.HasCoreOS() {
-					return errors.New("flexvolume add-ons not currently supported on coreos distro. Please use Ubuntu")
-				}
-			case "appgw-ingress":
-				if to.Bool(addon.Enabled) {
+				case "aad":
+					if !a.HasAADAdminGroupID() {
+						return errors.New("aad addon can't be enabled without a valid aadProfile w/ adminGroupID")
+					}
+				case "blobfuse-flexvolume":
+					if a.HasCoreOS() {
+						return errors.New("flexvolume add-ons not currently supported on coreos distro. Please use Ubuntu")
+					}
+				case "smb-flexvolume":
+					if a.HasCoreOS() {
+						return errors.New("flexvolume add-ons not currently supported on coreos distro. Please use Ubuntu")
+					}
+				case "keyvault-flexvolume":
+					if a.HasCoreOS() {
+						return errors.New("flexvolume add-ons not currently supported on coreos distro. Please use Ubuntu")
+					}
+				case "appgw-ingress":
 					if (a.ServicePrincipalProfile == nil || len(a.ServicePrincipalProfile.ObjectID) == 0) &&
 						!a.OrchestratorProfile.KubernetesConfig.UseManagedIdentity {
 						return errors.New("appgw-ingress add-ons requires 'objectID' to be specified or UseManagedIdentity to be true")
@@ -685,17 +713,70 @@ func (a *Properties) validateAddons() error {
 					if len(addon.Config["appgw-subnet"]) == 0 {
 						return errors.New("appgw-ingress add-ons requires 'appgw-subnet' in the Config. It is used to provision the subnet for Application Gateway in the vnet")
 					}
-				}
-			case "azuredisk-csi-driver", "azurefile-csi-driver":
-				if to.Bool(addon.Enabled) {
-					if !common.IsKubernetesVersionGe(a.OrchestratorProfile.OrchestratorVersion, "1.13.0") {
-						return errors.New(fmt.Sprintf("%s add-on can only be used Kubernetes 1.13 or above", addon.Name))
+				case common.AzureDiskCSIDriverAddonName, common.AzureFileCSIDriverAddonName:
+					if !to.Bool(a.OrchestratorProfile.KubernetesConfig.UseCloudControllerManager) {
+						return errors.New(fmt.Sprintf("%s add-on requires useCloudControllerManager to be true", addon.Name))
+					}
+				case "cloud-node-manager":
+					if !common.IsKubernetesVersionGe(a.OrchestratorProfile.OrchestratorVersion, "1.16.0") {
+						return errors.New(fmt.Sprintf("%s add-on can only be used Kubernetes 1.16 or above", addon.Name))
 					}
 					if !to.Bool(a.OrchestratorProfile.KubernetesConfig.UseCloudControllerManager) {
-						return errors.New(fmt.Sprintf("%s add-on requires useCloudControllerManager to be true.", addon.Name))
+						return errors.New(fmt.Sprintf("%s add-on requires useCloudControllerManager to be true", addon.Name))
 					}
+				case common.CiliumAddonName:
+					if !common.IsKubernetesVersionGe(a.OrchestratorProfile.OrchestratorVersion, "1.16.0") {
+						if a.OrchestratorProfile.KubernetesConfig.NetworkPolicy != NetworkPolicyCilium {
+							return errors.Errorf("%s addon may only be enabled if the networkPolicy=%s", common.CiliumAddonName, NetworkPolicyCilium)
+						}
+					} else {
+						return errors.Errorf("%s addon is not supported on Kubernetes v1.16.0 or greater", common.CiliumAddonName)
+					}
+				case common.AntreaAddonName:
+					if a.OrchestratorProfile.KubernetesConfig.NetworkPolicy != NetworkPolicyAntrea {
+						return errors.Errorf("%s addon may only be enabled if the networkPolicy=%s", common.AntreaAddonName, NetworkPolicyAntrea)
+					}
+				case common.FlannelAddonName:
+					if a.OrchestratorProfile.KubernetesConfig.NetworkPolicy != "" {
+						return errors.Errorf("%s addon does not support NetworkPolicy, replace %s with \"\"", common.FlannelAddonName, a.OrchestratorProfile.KubernetesConfig.NetworkPolicy)
+					}
+					networkPlugin := a.OrchestratorProfile.KubernetesConfig.NetworkPlugin
+					if networkPlugin != "" {
+						if networkPlugin != NetworkPluginFlannel {
+							return errors.Errorf("%s addon is not supported with networkPlugin=%s, please use networkPlugin=%s", common.FlannelAddonName, networkPlugin, NetworkPluginFlannel)
+						}
+					}
+				case "azure-policy":
+					isValidVersion, err := common.IsValidMinVersion(a.OrchestratorProfile.OrchestratorType, a.OrchestratorProfile.OrchestratorRelease, a.OrchestratorProfile.OrchestratorVersion, "1.10.0")
+					if err != nil {
+						return err
+					}
+					if !isValidVersion {
+						return errors.New("Azure Policy add-on can only be used with Kubernetes v1.10 and above. Please specify a compatible version")
+					}
+					if a.ServicePrincipalProfile == nil || a.OrchestratorProfile.KubernetesConfig.UseManagedIdentity {
+						return errors.New("Azure Policy add-on requires service principal profile to be specified")
+					}
+				case common.KubeDNSAddonName:
+					kubeDNSEnabled = true
+				case common.CoreDNSAddonName:
+					corednsEnabled = true
+				}
+			} else {
+				// Validation for addons if they are disabled
+				switch addon.Name {
+				case "cloud-node-manager":
+					if to.Bool(a.OrchestratorProfile.KubernetesConfig.UseCloudControllerManager) &&
+						common.IsKubernetesVersionGe(a.OrchestratorProfile.OrchestratorVersion, "1.16.0") {
+						return errors.New(fmt.Sprintf("%s add-on is required when useCloudControllerManager is true in Kubernetes 1.16 or above", addon.Name))
+					}
+				case common.AzureCloudProviderAddonName:
+					return errors.Errorf("%s add-on is required, it cannot be disabled", addon.Name)
 				}
 			}
+		}
+		if kubeDNSEnabled && corednsEnabled {
+			return errors.New("Both kube-dns and coredns addons are enabled, only one of these may be enabled on a cluster")
 		}
 	}
 	return nil
@@ -850,33 +931,24 @@ func (a *Properties) validateManagedIdentity() error {
 	return nil
 }
 
-func (a *Properties) validateFeatureFlags() error {
-	if a.FeatureFlags != nil {
-		if !a.IsAzureStackCloud() && a.FeatureFlags.EnableTelemetry {
-			return errors.Errorf("EnableTelemetry flag is only available for Azure Stack")
-		}
-	}
-	return nil
-}
-
 func (a *Properties) validateAADProfile() error {
 	if profile := a.AADProfile; profile != nil {
 		if a.OrchestratorProfile.OrchestratorType != Kubernetes {
 			return errors.Errorf("'aadProfile' is only supported by orchestrator '%v'", Kubernetes)
 		}
-		if _, err := uuid.FromString(profile.ClientAppID); err != nil {
+		if _, err := uuid.Parse(profile.ClientAppID); err != nil {
 			return errors.Errorf("clientAppID '%v' is invalid", profile.ClientAppID)
 		}
-		if _, err := uuid.FromString(profile.ServerAppID); err != nil {
+		if _, err := uuid.Parse(profile.ServerAppID); err != nil {
 			return errors.Errorf("serverAppID '%v' is invalid", profile.ServerAppID)
 		}
 		if len(profile.TenantID) > 0 {
-			if _, err := uuid.FromString(profile.TenantID); err != nil {
+			if _, err := uuid.Parse(profile.TenantID); err != nil {
 				return errors.Errorf("tenantID '%v' is invalid", profile.TenantID)
 			}
 		}
 		if len(profile.AdminGroupID) > 0 {
-			if _, err := uuid.FromString(profile.AdminGroupID); err != nil {
+			if _, err := uuid.Parse(profile.AdminGroupID); err != nil {
 				return errors.Errorf("adminGroupID '%v' is invalid", profile.AdminGroupID)
 			}
 		}
@@ -1068,6 +1140,12 @@ func (a *AgentPoolProfile) validateOrchestratorSpecificProperties(orchestratorTy
 		}
 		if a.StorageProfile == StorageAccount && (a.AvailabilityProfile == VirtualMachineScaleSets) {
 			return errors.Errorf("VirtualMachineScaleSets does not support storage account attached disks.  Instead specify 'StorageAccount': '%s' or specify AvailabilityProfile '%s'", ManagedDisks, AvailabilitySet)
+		}
+	}
+
+	if a.DiskEncryptionSetID != "" {
+		if !diskEncryptionSetIDRegex.MatchString(a.DiskEncryptionSetID) {
+			return errors.Errorf("DiskEncryptionSetID(%s) is of incorrect format, correct format: %s", a.DiskEncryptionSetID, diskEncryptionSetIDRegex.String())
 		}
 	}
 	return nil
@@ -1358,7 +1436,7 @@ func (k *KubernetesConfig) Validate(k8sVersion string, hasWindows, ipv6DualStack
 		}
 	}
 
-	if e := k.validateNetworkPlugin(); e != nil {
+	if e := k.validateNetworkPlugin(hasWindows); e != nil {
 		return e
 	}
 	if e := k.validateNetworkPolicy(k8sVersion, hasWindows); e != nil {
@@ -1367,29 +1445,16 @@ func (k *KubernetesConfig) Validate(k8sVersion string, hasWindows, ipv6DualStack
 	if e := k.validateNetworkPluginPlusPolicy(); e != nil {
 		return e
 	}
-	return k.validatePrivateAzureRegistryServer()
-}
-
-func (k *KubernetesConfig) validatePrivateAzureRegistryServer() error {
-
-	// Check PrivateAzureRegistryServer has a valid value.
-	valid := false
-	if k.PrivateAzureRegistryServer != "" {
-		if k.CustomHyperkubeImage != "" {
-			valid = true
-		}
-	} else {
-		valid = true
+	if e := k.validateNetworkMode(); e != nil {
+		return e
 	}
-
-	if !valid {
-		return errors.Errorf("customHyperkubeImage must be provided when privateAzureRegistryServer is provided")
+	if e := k.validateKubernetesImageBaseType(); e != nil {
+		return e
 	}
-
 	return nil
 }
 
-func (k *KubernetesConfig) validateNetworkPlugin() error {
+func (k *KubernetesConfig) validateNetworkPlugin(hasWindows bool) error {
 
 	networkPlugin := k.NetworkPlugin
 
@@ -1403,6 +1468,11 @@ func (k *KubernetesConfig) validateNetworkPlugin() error {
 	}
 	if !valid {
 		return errors.Errorf("unknown networkPlugin '%s' specified", networkPlugin)
+	}
+
+	// Temporary safety check, to be removed when Windows support is added.
+	if (networkPlugin == NetworkPluginAntrea) && hasWindows {
+		return errors.Errorf("networkPlugin '%s' is not supporting windows agents", networkPlugin)
 	}
 
 	return nil
@@ -1430,7 +1500,8 @@ func (k *KubernetesConfig) validateNetworkPolicy(k8sVersion string, hasWindows b
 	}
 
 	// Temporary safety check, to be removed when Windows support is added.
-	if (networkPolicy == "calico" || networkPolicy == NetworkPolicyCilium || networkPolicy == "flannel") && hasWindows {
+	if (networkPolicy == "calico" || networkPolicy == NetworkPolicyCilium ||
+		networkPolicy == NetworkPolicyAntrea) && hasWindows {
 		return errors.Errorf("networkPolicy '%s' is not supporting windows agents", networkPolicy)
 	}
 
@@ -1449,6 +1520,49 @@ func (k *KubernetesConfig) validateNetworkPluginPlusPolicy() error {
 		}
 	}
 	return errors.Errorf("networkPolicy '%s' is not supported with networkPlugin '%s'", config.networkPolicy, config.networkPlugin)
+}
+
+func (k *KubernetesConfig) validateNetworkMode() error {
+	networkPlugin := k.NetworkPlugin
+	networkPolicy := k.NetworkPolicy
+	networkMode := k.NetworkMode
+
+	// Check NetworkMode has a valid value.
+	valid := false
+	for _, mode := range NetworkModeValues {
+		if networkMode == mode {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return errors.Errorf("unknown networkMode '%s' specified", networkMode)
+	}
+
+	if networkMode != "" {
+		if networkPlugin != "azure" {
+			return errors.New("networkMode requires network plugin to be 'azure'")
+		}
+
+		if networkPolicy == "calico" && networkMode != NetworkModeTransparent {
+			return errors.Errorf("networkMode '%s' is not supported by calico", networkMode)
+		}
+	}
+
+	return nil
+}
+
+func (k *KubernetesConfig) validateKubernetesImageBaseType() error {
+	for _, valid := range kubernetesImageBaseTypeValidVersions {
+		if valid == k.KubernetesImageBaseType {
+			return nil
+		}
+	}
+	return errors.Errorf("Invalid kubernetesImageBaseType value \"%s\", please use one of the following versions: %s", k.KubernetesImageBaseType, kubernetesImageBaseTypeValidVersions)
+}
+
+func (k *KubernetesConfig) isUsingCustomKubeComponent() bool {
+	return k.CustomKubeAPIServerImage != "" || k.CustomKubeControllerManagerImage != "" || k.CustomKubeProxyImage != "" || k.CustomKubeSchedulerImage != "" || k.CustomKubeBinaryURL != ""
 }
 
 func (a *Properties) validateContainerRuntime() error {
@@ -1478,6 +1592,45 @@ func (a *Properties) validateContainerRuntime() error {
 	// Make sure we don't use unsupported container runtimes on windows.
 	if (containerRuntime == KataContainers || containerRuntime == Containerd) && a.HasWindows() {
 		return errors.Errorf("containerRuntime %q is not supporting windows agents", containerRuntime)
+	}
+
+	return nil
+}
+
+func (a *Properties) validateCustomKubeComponent() error {
+	k := a.OrchestratorProfile.KubernetesConfig
+	if k == nil {
+		return nil
+	}
+
+	if common.IsKubernetesVersionGe(a.OrchestratorProfile.OrchestratorVersion, "1.17.0") {
+		if k.CustomHyperkubeImage != "" {
+			return errors.New("customHyperkubeImage has no effect in Kubernetes version 1.17.0 or above")
+		}
+	} else {
+		if k.isUsingCustomKubeComponent() {
+			return errors.New("customKubeAPIServerImage, customKubeControllerManagerImage, customKubeProxyImage, customKubeSchedulerImage or customKubeBinaryURL have no effect in Kubernetes version 1.16 or earlier")
+		}
+	}
+
+	return nil
+}
+
+func (a *Properties) validatePrivateAzureRegistryServer() error {
+	k := a.OrchestratorProfile.KubernetesConfig
+	if k == nil || k.PrivateAzureRegistryServer == "" {
+		return nil
+	}
+
+	// Custom components must be provided if private azure registry server is not empty
+	if common.IsKubernetesVersionGe(a.OrchestratorProfile.OrchestratorVersion, "1.17.0") {
+		if !k.isUsingCustomKubeComponent() {
+			return errors.Errorf("customKubeAPIServerImage, customKubeControllerManagerImage, customKubeProxyImage or customKubeSchedulerImage must be provided when privateAzureRegistryServer is provided")
+		}
+	} else {
+		if k.CustomHyperkubeImage == "" {
+			return errors.Errorf("customHyperkubeImage must be provided when privateAzureRegistryServer is provided")
+		}
 	}
 
 	return nil
@@ -1656,4 +1809,27 @@ func validateDependenciesLocation(dependenciesLocation DependenciesLocation, dep
 		}
 	}
 	return false
+}
+
+// validateAzureStackSupport logs a warning if apimodel contains preview features and returns an error if a property is not supported on Azure Stack clouds
+func (a *Properties) validateAzureStackSupport() error {
+	if a.OrchestratorProfile.OrchestratorType == Kubernetes && a.IsAzureStackCloud() {
+		networkPlugin := a.OrchestratorProfile.KubernetesConfig.NetworkPlugin
+		if networkPlugin == "azure" || networkPlugin == "" {
+			log.Warnf("NetworkPlugin 'azure' is a private preview feature on Azure Stack clouds")
+		}
+		if networkPlugin != "azure" && networkPlugin != "kubenet" && networkPlugin != "" {
+			return errors.Errorf("kubernetesConfig.networkPlugin '%s' is not supported on Azure Stack clouds", networkPlugin)
+		}
+		if a.MasterProfile.AvailabilityProfile != AvailabilitySet {
+			return errors.Errorf("masterProfile.availabilityProfile should be set to '%s' on Azure Stack clouds", AvailabilitySet)
+		}
+		for _, agentPool := range a.AgentPoolProfiles {
+			pool := agentPool
+			if pool.AvailabilityProfile != AvailabilitySet {
+				return errors.Errorf("agentPoolProfiles[%s].availabilityProfile should be set to '%s' on Azure Stack clouds", pool.Name, AvailabilitySet)
+			}
+		}
+	}
+	return nil
 }

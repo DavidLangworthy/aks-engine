@@ -1,3 +1,4 @@
+//+build test
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
@@ -212,7 +213,8 @@ func (s *Service) WaitForIngress(timeout, sleep time.Duration) error {
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- GetAsync(s.Metadata.Name, s.Metadata.Namespace):
+			default:
+				ch <- GetAsync(s.Metadata.Name, s.Metadata.Namespace)
 				time.Sleep(sleep)
 			}
 		}
@@ -250,7 +252,8 @@ func WaitOnDeleted(servicePrefix, namespace string, sleep, timeout time.Duration
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- GetAllByPrefixAsync(servicePrefix, namespace):
+			default:
+				ch <- GetAllByPrefixAsync(servicePrefix, namespace)
 				time.Sleep(sleep)
 			}
 		}
@@ -283,7 +286,8 @@ func (s *Service) ValidateWithRetry(bodyResponseTextMatch string, sleep, timeout
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- s.Validate(bodyResponseTextMatch):
+			default:
+				ch <- s.Validate(bodyResponseTextMatch)
 				time.Sleep(sleep)
 			}
 		}

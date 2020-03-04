@@ -4,7 +4,7 @@
     "properties": {
         "orchestratorProfile": {
             "orchestratorType": "Kubernetes",
-            "orchestratorRelease": "1.11",
+            "orchestratorRelease": "1.13",
             "kubernetesConfig": {
                 "kubernetesImageBase": "k8s.gcr.io/",
                 "useInstanceMetadata": false,
@@ -40,6 +40,7 @@
             "distro": "ubuntu",
             "osDiskSizeGB": 200,
             "count": 3,
+            "availabilityProfile": "AvailabilitySet",
             "vmSize": "Standard_D2_v2"
         },
         "agentPoolProfiles": [
@@ -72,7 +73,7 @@
                 ]
             }
         },
-        "windowsProfile": { 
+        "windowsProfile": {
             "adminUsername": "azureuser",
             "adminPassword": "myAdminPassword~1",
             "sshEnabled": true

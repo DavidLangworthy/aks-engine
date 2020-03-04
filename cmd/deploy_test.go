@@ -5,18 +5,18 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"strconv"
 	"strings"
 	"testing"
 
-	"os"
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
 
 	"github.com/Azure/aks-engine/pkg/api"
 	"github.com/Azure/aks-engine/pkg/armhelpers"
-	"github.com/gofrs/uuid"
-	"github.com/pkg/errors"
-	"github.com/spf13/cobra"
 )
 
 const ExampleAPIModel = `{
@@ -130,6 +130,8 @@ func getAPIModelWithoutServicePrincipalProfile(useManagedIdentity bool) string {
 }
 
 func TestNewDeployCmd(t *testing.T) {
+	t.Parallel()
+
 	command := newDeployCmd()
 	if command.Use != deployName || command.Short != deployShortDescription || command.Long != deployLongDescription {
 		t.Fatalf("deploy command should have use %s equal %s, short %s equal %s and long %s equal to %s", command.Use, deployName, command.Short, deployShortDescription, command.Long, versionLongDescription)
@@ -150,120 +152,141 @@ func TestNewDeployCmd(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	r := &cobra.Command{}
-	apimodelPath := "apimodel-unit-test.json"
-
-	_, err := os.Create(apimodelPath)
-	if err != nil {
-		t.Fatalf("unable to create test apimodel path: %s", err.Error())
-	}
-	defer os.Remove(apimodelPath)
-
 	cases := []struct {
-		dc          *deployCmd
+		dcFactory   func(string) (deployCmd, []string)
 		expectedErr error
 		args        []string
+		name        string
 	}{
 		{
-			dc: &deployCmd{
-				apimodelPath:      "",
-				dnsPrefix:         "test",
-				outputDirectory:   "output/test",
-				forceOverwrite:    false,
-				caCertificatePath: "test",
-				caPrivateKeyPath:  "test",
-				location:          "west europe",
+			dcFactory: func(_ string) (deployCmd, []string) {
+				return deployCmd{
+					apimodelPath:      "",
+					dnsPrefix:         "test",
+					outputDirectory:   "output/test",
+					forceOverwrite:    false,
+					caCertificatePath: "test",
+					caPrivateKeyPath:  "test",
+					location:          "west europe",
+				}, []string{}
 			},
-			args:        []string{},
 			expectedErr: nil,
+			name:        "ValidWithNoAPIModelPath",
 		},
 		{
-			dc: &deployCmd{
-				apimodelPath:      "",
-				dnsPrefix:         "test",
-				outputDirectory:   "output/test",
-				caCertificatePath: "test",
-				caPrivateKeyPath:  "test",
+			dcFactory: func(_ string) (deployCmd, []string) {
+				return deployCmd{
+					apimodelPath:      "",
+					dnsPrefix:         "test",
+					outputDirectory:   "output/test",
+					caCertificatePath: "test",
+					caPrivateKeyPath:  "test",
+				}, []string{"wrong/path"}
 			},
-			args:        []string{"wrong/path"},
 			expectedErr: errors.New("specified api model does not exist (wrong/path)"),
+			name:        "InvalidWithWrongPath",
 		},
 		{
-			dc: &deployCmd{
-				apimodelPath:      "",
-				dnsPrefix:         "test",
-				outputDirectory:   "output/test",
-				caCertificatePath: "test",
-				caPrivateKeyPath:  "test",
+			dcFactory: func(_ string) (deployCmd, []string) {
+				return deployCmd{
+					apimodelPath:      "",
+					dnsPrefix:         "test",
+					outputDirectory:   "output/test",
+					caCertificatePath: "test",
+					caPrivateKeyPath:  "test",
+				}, []string{"test/apimodel.json", "some_random_stuff"}
 			},
-			args:        []string{"test/apimodel.json", "some_random_stuff"},
 			expectedErr: errors.New("too many arguments were provided to 'deploy'"),
+			name:        "InvalidWithTooManyArguments",
 		},
 		{
-			dc: &deployCmd{
-				apimodelPath:      "",
-				dnsPrefix:         "test",
-				outputDirectory:   "output/test",
-				caCertificatePath: "test",
-				caPrivateKeyPath:  "test",
+			dcFactory: func(apimodelPath string) (deployCmd, []string) {
+				return deployCmd{
+					apimodelPath:      "",
+					dnsPrefix:         "test",
+					outputDirectory:   "output/test",
+					caCertificatePath: "test",
+					caPrivateKeyPath:  "test",
+				}, []string{apimodelPath}
 			},
-			args:        []string{apimodelPath},
 			expectedErr: errors.New("--location must be specified"),
+			name:        "InvalidWithNoLocationSpecified",
 		},
 		{
-			dc: &deployCmd{
-				apimodelPath:      "",
-				dnsPrefix:         "test",
-				outputDirectory:   "output/test",
-				caCertificatePath: "test",
-				caPrivateKeyPath:  "test",
-				location:          "west europe",
+			dcFactory: func(apimodelPath string) (deployCmd, []string) {
+				return deployCmd{
+					apimodelPath:      "",
+					dnsPrefix:         "test",
+					outputDirectory:   "output/test",
+					caCertificatePath: "test",
+					caPrivateKeyPath:  "test",
+					location:          "west europe",
+				}, []string{apimodelPath}
 			},
-			args:        []string{apimodelPath},
 			expectedErr: nil,
+			name:        "ValidWithAPIModelAsArg",
 		},
 		{
-			dc: &deployCmd{
-				apimodelPath:      apimodelPath,
-				dnsPrefix:         "test",
-				outputDirectory:   "output/test",
-				caCertificatePath: "test",
-				caPrivateKeyPath:  "test",
-				location:          "canadaeast",
+			dcFactory: func(apimodelPath string) (deployCmd, []string) {
+				return deployCmd{
+					apimodelPath:      apimodelPath,
+					dnsPrefix:         "test",
+					outputDirectory:   "output/test",
+					caCertificatePath: "test",
+					caPrivateKeyPath:  "test",
+					location:          "canadaeast",
+				}, []string{}
 			},
-			args:        []string{},
 			expectedErr: nil,
+			name:        "ValidWithAPIModelInParams",
 		},
 	}
 
 	for _, c := range cases {
-		err = c.dc.validateArgs(r, c.args)
-		if err != nil && c.expectedErr != nil {
-			if err.Error() != c.expectedErr.Error() {
-				t.Fatalf("expected validate deploy command to return error %s, but instead got %s", c.expectedErr.Error(), err.Error())
+		tc := c
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fileName, del := makeTmpFile(t, "apimodel-unit-test.json")
+			defer del()
+			dc, args := tc.dcFactory(fileName)
+			err := dc.validateArgs(r, args)
+			if err != nil && tc.expectedErr != nil {
+				if err.Error() != tc.expectedErr.Error() {
+					t.Fatalf("expected validate deploy command to return error %s, but instead got %s", tc.expectedErr.Error(), err.Error())
+				}
+			} else {
+				if tc.expectedErr != nil {
+					t.Fatalf("expected validate deploy command to return error %s, but instead got no error", tc.expectedErr.Error())
+				} else if err != nil {
+					t.Fatalf("expected validate deploy command to return no error, but instead got %s", err.Error())
+				}
 			}
-		} else {
-			if c.expectedErr != nil {
-				t.Fatalf("expected validate deploy command to return error %s, but instead got no error", c.expectedErr.Error())
-			} else if err != nil {
-				t.Fatalf("expected validate deploy command to return no error, but instead got %s", err.Error())
-			}
-		}
+		})
 	}
 }
 
 func TestAutofillApimodelWithoutManagedIdentityCreatesCreds(t *testing.T) {
+	t.Parallel()
+
 	testAutodeployCredentialHandling(t, false, "", "")
 }
 
 func TestAutofillApimodelWithManagedIdentitySkipsCreds(t *testing.T) {
+	t.Parallel()
+
 	testAutodeployCredentialHandling(t, true, "", "")
 }
 
 func TestAutofillApimodelAllowsPrespecifiedCreds(t *testing.T) {
+	t.Parallel()
+
 	testAutodeployCredentialHandling(t, false, "clientID", "clientSecret")
 }
 
 func TestAutoSufixWithDnsPrefixInApiModel(t *testing.T) {
+	t.Parallel()
+
 	apiloader := &api.Apiloader{
 		Translator: nil,
 	}
@@ -273,9 +296,13 @@ func TestAutoSufixWithDnsPrefixInApiModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
 	}
+
+	outDir, del := makeTmpDir(t)
+	defer del()
+
 	deployCmd := &deployCmd{
 		apimodelPath:     "./this/is/unused.json",
-		outputDirectory:  "_test_output",
+		outputDirectory:  outDir,
 		forceOverwrite:   true,
 		location:         "westus",
 		autoSuffix:       true,
@@ -293,8 +320,6 @@ func TestAutoSufixWithDnsPrefixInApiModel(t *testing.T) {
 		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
 	}
 
-	defer os.RemoveAll(deployCmd.outputDirectory)
-
 	if deployCmd.containerService.Properties.MasterProfile.DNSPrefix == "mytestcluster" {
 		t.Fatalf("expected %s-{timestampsuffix} but got %s", "mytestcluster", deployCmd.containerService.Properties.MasterProfile.DNSPrefix)
 	}
@@ -302,12 +327,14 @@ func TestAutoSufixWithDnsPrefixInApiModel(t *testing.T) {
 }
 
 func TestAPIModelWithoutServicePrincipalProfileAndClientIdAndSecretInCmd(t *testing.T) {
+	t.Parallel()
+
 	apiloader := &api.Apiloader{
 		Translator: nil,
 	}
 
 	apimodel := getAPIModelWithoutServicePrincipalProfile(false)
-	TestClientIDInCmd, err := uuid.FromString("DEC923E3-1EF1-4745-9516-37906D56DEC4")
+	TestClientIDInCmd, err := uuid.Parse("DEC923E3-1EF1-4745-9516-37906D56DEC4")
 	if err != nil {
 		t.Fatalf("Invalid ClientID in Test: %s", err)
 	}
@@ -318,9 +345,13 @@ func TestAPIModelWithoutServicePrincipalProfileAndClientIdAndSecretInCmd(t *test
 	if err != nil {
 		t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
 	}
+
+	outDir, del := makeTmpDir(t)
+	defer del()
+
 	deployCmd := &deployCmd{
 		apimodelPath:     "./this/is/unused.json",
-		outputDirectory:  "_test_output",
+		outputDirectory:  outDir,
 		forceOverwrite:   true,
 		location:         "westus",
 		containerService: cs,
@@ -338,8 +369,6 @@ func TestAPIModelWithoutServicePrincipalProfileAndClientIdAndSecretInCmd(t *test
 	if err != nil {
 		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
 	}
-
-	defer os.RemoveAll(deployCmd.outputDirectory)
 
 	if deployCmd.containerService.Properties.ServicePrincipalProfile == nil || deployCmd.containerService.Properties.ServicePrincipalProfile.ClientID == "" || deployCmd.containerService.Properties.ServicePrincipalProfile.Secret == "" {
 		t.Fatalf("expected service principal profile to be populated from deployment command arguments")
@@ -355,12 +384,14 @@ func TestAPIModelWithoutServicePrincipalProfileAndClientIdAndSecretInCmd(t *test
 }
 
 func TestAPIModelWithEmptyServicePrincipalProfileAndClientIdAndSecretInCmd(t *testing.T) {
+	t.Parallel()
+
 	apiloader := &api.Apiloader{
 		Translator: nil,
 	}
 
 	apimodel := getAPIModel(ExampleAPIModelWithDNSPrefix, false, "", "")
-	TestClientIDInCmd, err := uuid.FromString("DEC923E3-1EF1-4745-9516-37906D56DEC4")
+	TestClientIDInCmd, err := uuid.Parse("DEC923E3-1EF1-4745-9516-37906D56DEC4")
 	if err != nil {
 		t.Fatalf("Invalid ClientID in Test: %s", err)
 	}
@@ -371,9 +402,13 @@ func TestAPIModelWithEmptyServicePrincipalProfileAndClientIdAndSecretInCmd(t *te
 	if err != nil {
 		t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
 	}
+
+	outDir, del := makeTmpDir(t)
+	defer del()
+
 	deployCmd := &deployCmd{
 		apimodelPath:     "./this/is/unused.json",
-		outputDirectory:  "_test_output",
+		outputDirectory:  outDir,
 		forceOverwrite:   true,
 		location:         "westus",
 		containerService: cs,
@@ -391,8 +426,6 @@ func TestAPIModelWithEmptyServicePrincipalProfileAndClientIdAndSecretInCmd(t *te
 		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
 	}
 
-	defer os.RemoveAll(deployCmd.outputDirectory)
-
 	if deployCmd.containerService.Properties.ServicePrincipalProfile == nil || deployCmd.containerService.Properties.ServicePrincipalProfile.ClientID == "" || deployCmd.containerService.Properties.ServicePrincipalProfile.Secret == "" {
 		t.Fatalf("expected service principal profile to be populated from deployment command arguments")
 	}
@@ -407,6 +440,8 @@ func TestAPIModelWithEmptyServicePrincipalProfileAndClientIdAndSecretInCmd(t *te
 }
 
 func TestAPIModelWithoutServicePrincipalProfileAndWithoutClientIdAndSecretInCmd(t *testing.T) {
+	t.Parallel()
+
 	apiloader := &api.Apiloader{
 		Translator: nil,
 	}
@@ -417,9 +452,13 @@ func TestAPIModelWithoutServicePrincipalProfileAndWithoutClientIdAndSecretInCmd(
 	if err != nil {
 		t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
 	}
+
+	outDir, del := makeTmpDir(t)
+	defer del()
+
 	deployCmd := &deployCmd{
 		apimodelPath:     "./this/is/unused.json",
-		outputDirectory:  "_test_output",
+		outputDirectory:  outDir,
 		forceOverwrite:   true,
 		location:         "westus",
 		containerService: cs,
@@ -435,8 +474,6 @@ func TestAPIModelWithoutServicePrincipalProfileAndWithoutClientIdAndSecretInCmd(
 		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
 	}
 
-	defer os.RemoveAll(deployCmd.outputDirectory)
-
 	if deployCmd.containerService.Properties.ServicePrincipalProfile != nil {
 		t.Fatalf("expected service principal profile to be nil for unmanaged identity, where client id and secret are not supplied in api model and deployment command")
 	}
@@ -444,6 +481,8 @@ func TestAPIModelWithoutServicePrincipalProfileAndWithoutClientIdAndSecretInCmd(
 }
 
 func TestAPIModelWithEmptyServicePrincipalProfileAndWithoutClientIdAndSecretInCmd(t *testing.T) {
+	t.Parallel()
+
 	apiloader := &api.Apiloader{
 		Translator: nil,
 	}
@@ -454,9 +493,13 @@ func TestAPIModelWithEmptyServicePrincipalProfileAndWithoutClientIdAndSecretInCm
 	if err != nil {
 		t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
 	}
+
+	outDir, del := makeTmpDir(t)
+	defer del()
+
 	deployCmd := &deployCmd{
 		apimodelPath:     "./this/is/unused.json",
-		outputDirectory:  "_test_output",
+		outputDirectory:  outDir,
 		forceOverwrite:   true,
 		location:         "westus",
 		containerService: cs,
@@ -471,8 +514,6 @@ func TestAPIModelWithEmptyServicePrincipalProfileAndWithoutClientIdAndSecretInCm
 	if err != nil {
 		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
 	}
-
-	defer os.RemoveAll(deployCmd.outputDirectory)
 
 	if deployCmd.containerService.Properties.ServicePrincipalProfile == nil {
 		t.Fatalf("expected service principal profile to be Empty and not nil for unmanaged identity, where client id and secret are not supplied in api model and deployment command")
@@ -501,13 +542,16 @@ func testAutodeployCredentialHandling(t *testing.T, useManagedIdentity bool, cli
 		t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
 	}
 
+	outDir, del := makeTmpDir(t)
+	defer del()
+
 	// deserialization happens in validate(), but we are testing just the default
 	// setting that occurs in autofillApimodel (which is called from validate)
 	// Thus, it assumes that containerService/apiVersion are already populated
 	deployCmd := &deployCmd{
 		apimodelPath:    "./this/is/unused.json",
 		dnsPrefix:       "dnsPrefix1",
-		outputDirectory: "_test_output",
+		outputDirectory: outDir,
 		forceOverwrite:  true,
 		location:        "westus",
 
@@ -524,9 +568,6 @@ func testAutodeployCredentialHandling(t *testing.T, useManagedIdentity bool, cli
 	if err != nil {
 		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
 	}
-
-	// cleanup, since auto-populations creates dirs and saves the SSH private key that it might create
-	defer os.RemoveAll(deployCmd.outputDirectory)
 
 	err = deployCmd.validateAPIModelAsVLabs()
 	if err != nil {
@@ -547,6 +588,8 @@ func testAutodeployCredentialHandling(t *testing.T, useManagedIdentity bool, cli
 }
 
 func TestDeployCmdMergeAPIModel(t *testing.T) {
+	t.Parallel()
+
 	d := &deployCmd{}
 	d.apimodelPath = "../pkg/engine/testdata/simple/kubernetes.json"
 	err := d.mergeAPIModel()
@@ -580,6 +623,11 @@ func TestDeployCmdMergeAPIModel(t *testing.T) {
 }
 
 func TestDeployCmdRun(t *testing.T) {
+	t.Parallel()
+
+	outdir, del := makeTmpDir(t)
+	defer del()
+
 	d := &deployCmd{
 		client: &armhelpers.MockAKSEngineClient{},
 		authProvider: &mockAuthProvider{
@@ -587,7 +635,7 @@ func TestDeployCmdRun(t *testing.T) {
 			getClientMock: &armhelpers.MockAKSEngineClient{},
 		},
 		apimodelPath:    "../pkg/engine/testdata/simple/kubernetes.json",
-		outputDirectory: "_test_output",
+		outputDirectory: outdir,
 		forceOverwrite:  true,
 		location:        "westus",
 	}
@@ -598,7 +646,7 @@ func TestDeployCmdRun(t *testing.T) {
 	addAuthFlags(d.getAuthArgs(), f)
 
 	fakeRawSubscriptionID := "6dc93fae-9a76-421f-bbe5-cc6460ea81cb"
-	fakeSubscriptionID, err := uuid.FromString(fakeRawSubscriptionID)
+	fakeSubscriptionID, err := uuid.Parse(fakeRawSubscriptionID)
 	fakeClientID := "b829b379-ca1f-4f1d-91a2-0d26b244680d"
 	fakeClientSecret := "0se43bie-3zs5-303e-aav5-dcf231vb82ds"
 	if err != nil {
@@ -609,9 +657,6 @@ func TestDeployCmdRun(t *testing.T) {
 	d.getAuthArgs().rawSubscriptionID = fakeRawSubscriptionID
 	d.getAuthArgs().rawClientID = fakeClientID
 	d.getAuthArgs().ClientSecret = fakeClientSecret
-	if err != nil {
-		t.Fatalf("Invalid SubscriptionId in Test: %s", err)
-	}
 
 	err = d.loadAPIModel()
 	if err != nil {
@@ -624,7 +669,56 @@ func TestDeployCmdRun(t *testing.T) {
 	}
 }
 
+func TestLoadApiModelOnAzureStack(t *testing.T) {
+	t.Parallel()
+
+	outdir, del := makeTmpDir(t)
+	defer del()
+
+	d := &deployCmd{
+		client: &armhelpers.MockAKSEngineClient{},
+		authProvider: &mockAuthProvider{
+			authArgs:      &authArgs{},
+			getClientMock: &armhelpers.MockAKSEngineClient{},
+		},
+		apimodelPath:    "../pkg/engine/testdata/azurestack/kubernetes.json",
+		outputDirectory: outdir,
+		forceOverwrite:  true,
+		location:        "westus",
+	}
+
+	r := &cobra.Command{}
+	f := r.Flags()
+
+	addAuthFlags(d.getAuthArgs(), f)
+
+	d.location = "local"
+	fakeRawSubscriptionID := "6dc93fae-9a76-421f-bbe5-cc6460ea81cb"
+	fakeSubscriptionID, err := uuid.Parse(fakeRawSubscriptionID)
+	fakeClientID := "b829b379-ca1f-4f1d-91a2-0d26b244680d"
+	fakeClientSecret := "0se43bie-3zs5-303e-aav5-dcf231vb82ds"
+	if err != nil {
+		t.Fatalf("Invalid SubscriptionId in Test: %s", err)
+	}
+
+	d.getAuthArgs().IdentitySystem = "adfs"
+	d.getAuthArgs().SubscriptionID = fakeSubscriptionID
+	d.getAuthArgs().rawSubscriptionID = fakeRawSubscriptionID
+	d.getAuthArgs().rawClientID = fakeClientID
+	d.getAuthArgs().ClientSecret = fakeClientSecret
+	err = d.loadAPIModel()
+	if err != nil {
+		t.Fatalf("Failed to call LoadAPIModel: %s", err)
+	}
+
+	if d.getAuthArgs().IdentitySystem != d.containerService.Properties.CustomCloudProfile.IdentitySystem {
+		t.Fatal("Failed to set cli Identity system as default ")
+	}
+}
+
 func TestOutputDirectoryWithDNSPrefix(t *testing.T) {
+	t.Parallel()
+
 	apiloader := &api.Apiloader{
 		Translator: nil,
 	}
@@ -654,7 +748,7 @@ func TestOutputDirectoryWithDNSPrefix(t *testing.T) {
 		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
 	}
 
-	defer os.RemoveAll(d.outputDirectory)
+	defer os.RemoveAll("_output")
 
 	if d.outputDirectory != path.Join("_output", d.dnsPrefix) {
 		t.Fatalf("Calculated output directory should be %s, actual value %s", path.Join("_output", d.dnsPrefix), d.outputDirectory)
@@ -662,19 +756,24 @@ func TestOutputDirectoryWithDNSPrefix(t *testing.T) {
 }
 
 func TestAPIModelWithContainerMonitoringAddonWithNoConfigInCmd(t *testing.T) {
+	t.Parallel()
+
 	apiloader := &api.Apiloader{
 		Translator: nil,
 	}
 
 	apimodel := ExampleAPIModelWithContainerMonitoringAddonWithNoConfig
-
 	cs, ver, err := apiloader.DeserializeContainerService([]byte(apimodel), false, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
 	}
+
+	outDir, del := makeTmpDir(t)
+	defer del()
+
 	deployCmd := &deployCmd{
 		apimodelPath:     "./this/is/unused.json",
-		outputDirectory:  "_test_output",
+		outputDirectory:  outDir,
 		forceOverwrite:   true,
 		location:         "westus",
 		containerService: cs,
@@ -690,10 +789,7 @@ func TestAPIModelWithContainerMonitoringAddonWithNoConfigInCmd(t *testing.T) {
 		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
 	}
 
-	defer os.RemoveAll(deployCmd.outputDirectory)
-
 	k8sConfig := deployCmd.containerService.Properties.OrchestratorProfile.KubernetesConfig
-
 	if k8sConfig == nil {
 		t.Fatalf("expected valid kubernetes config")
 	}
@@ -715,13 +811,11 @@ func TestAPIModelWithContainerMonitoringAddonWithNoConfigInCmd(t *testing.T) {
 
 	expectedWorkspaceKeyInBase64 := "NEQrdnlkNS9qU2NCbXNBd1pPRi8wR09CUTVrdUZRYzlKVmFXK0hsbko1OGN5ZVBKY3dUcGtzK3JWbXZnY1hHbW15dWpMRE5FVlBpVDhwQjI3NGE5WWc9PQ=="
 	if addon.Config["workspaceKey"] != expectedWorkspaceKeyInBase64 {
-		t.Fatalf("unexpected workspaceKey : %s", addon.Config["workspaceKey"])
 		t.Fatalf("expected workspaceKey : %s but got : %s", expectedWorkspaceKeyInBase64, addon.Config["workspaceKey"])
 	}
 
 	workspaceResourceID := addon.Config["logAnalyticsWorkspaceResourceId"]
 	resourceParts := strings.Split(workspaceResourceID, "/")
-
 	if len(resourceParts) != 9 {
 		t.Fatalf("invalid workspaceResourceID : %s", workspaceResourceID)
 	}
@@ -730,7 +824,6 @@ func TestAPIModelWithContainerMonitoringAddonWithNoConfigInCmd(t *testing.T) {
 	workspaceResourceGroup := resourceParts[4]
 	workspaceProvider := resourceParts[6]
 	workspaceName := resourceParts[8]
-
 	expectedworkspaceSubscriptionID := "00000000-0000-0000-0000-000000000000"
 	if workspaceSubscriptionID != expectedworkspaceSubscriptionID {
 		t.Fatalf("expected workspaceSubscriptionID: %s, but found : %s", expectedworkspaceSubscriptionID, workspaceSubscriptionID)
@@ -754,6 +847,8 @@ func TestAPIModelWithContainerMonitoringAddonWithNoConfigInCmd(t *testing.T) {
 }
 
 func TestAPIModelWithContainerMonitoringAddonWithConfigInCmd(t *testing.T) {
+	t.Parallel()
+
 	apiloader := &api.Apiloader{
 		Translator: nil,
 	}
@@ -764,9 +859,13 @@ func TestAPIModelWithContainerMonitoringAddonWithConfigInCmd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
 	}
+
+	outDir, del := makeTmpDir(t)
+	defer del()
+
 	deployCmd := &deployCmd{
 		apimodelPath:     "./this/is/unused.json",
-		outputDirectory:  "_test_output",
+		outputDirectory:  outDir,
 		forceOverwrite:   true,
 		location:         "westus",
 		containerService: cs,
@@ -782,10 +881,7 @@ func TestAPIModelWithContainerMonitoringAddonWithConfigInCmd(t *testing.T) {
 		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
 	}
 
-	defer os.RemoveAll(deployCmd.outputDirectory)
-
 	k8sConfig := deployCmd.containerService.Properties.OrchestratorProfile.KubernetesConfig
-
 	if k8sConfig == nil {
 		t.Fatalf("expected valid kubernetes config")
 	}
@@ -795,7 +891,6 @@ func TestAPIModelWithContainerMonitoringAddonWithConfigInCmd(t *testing.T) {
 	}
 
 	addon := k8sConfig.Addons[0]
-
 	expectedAddonName := "container-monitoring"
 	if addon.Name != expectedAddonName {
 		t.Fatalf("expected addon name: %s but got: %s", expectedAddonName, addon.Name)
@@ -808,7 +903,6 @@ func TestAPIModelWithContainerMonitoringAddonWithConfigInCmd(t *testing.T) {
 
 	expectedWorkspaceKeyInBase64 := "NEQrdnlkNS9qU2NCbXNBd1pPRi8wR09CUTVrdUZRYzlKVmFXK0hsbko1OGN5ZVBKY3dUcGtzK3JWbXZnY1hHbW15dWpMRE5FVlBpVDhwQjI3NGE5WWc9PQ=="
 	if addon.Config["workspaceKey"] != expectedWorkspaceKeyInBase64 {
-		t.Fatalf("unexpected workspaceKey : %s", addon.Config["workspaceKey"])
 		t.Fatalf("expected workspaceKey : %s but got : %s", expectedWorkspaceKeyInBase64, addon.Config["workspaceKey"])
 	}
 
@@ -823,7 +917,6 @@ func TestAPIModelWithContainerMonitoringAddonWithConfigInCmd(t *testing.T) {
 	workspaceResourceGroup := resourceParts[4]
 	workspaceProvider := resourceParts[6]
 	workspaceName := resourceParts[8]
-
 	expectedworkspaceSubscriptionID := "00000000-0000-0000-0000-000000000000"
 	if workspaceSubscriptionID != expectedworkspaceSubscriptionID {
 		t.Fatalf("expected workspaceSubscriptionID: %s, but found : %s", expectedworkspaceSubscriptionID, workspaceSubscriptionID)
@@ -846,60 +939,159 @@ func TestAPIModelWithContainerMonitoringAddonWithConfigInCmd(t *testing.T) {
 }
 
 func TestAPIModelWithContainerMonitoringAddonWithWorkspaceGuidAndKeyConfigInCmd(t *testing.T) {
-	apiloader := &api.Apiloader{
-		Translator: nil,
+	type WorkspaceInfo struct {
+		WorkspaceGUID   string
+		WorkspaceKey    string
+		WorkspaceDomain string
 	}
 
-	apimodel := ExampleAPIModelWithContainerMonitoringAddonWithWorkspaceGUIDAndKeyConfig
+	cases := []struct {
+		dcFactory        func(string, *api.ContainerService, string) deployCmd
+		location         string
+		expectedResponse WorkspaceInfo
+	}{
+		{
+			dcFactory: func(outDir string, cs *api.ContainerService, ver string) deployCmd {
+				return deployCmd{
+					apimodelPath:     "./this/is/unused.json",
+					outputDirectory:  outDir,
+					forceOverwrite:   true,
+					location:         "westus",
+					containerService: cs,
+					apiVersion:       ver,
 
-	cs, ver, err := apiloader.DeserializeContainerService([]byte(apimodel), false, false, nil)
-	if err != nil {
-		t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
-	}
-	deployCmd := &deployCmd{
-		apimodelPath:     "./this/is/unused.json",
-		outputDirectory:  "_test_output",
-		forceOverwrite:   true,
-		location:         "westus",
-		containerService: cs,
-		apiVersion:       ver,
+					client: &armhelpers.MockAKSEngineClient{},
+					authProvider: &mockAuthProvider{
+						authArgs: &authArgs{},
+					},
+				}
+			},
+			location: "westus",
+			expectedResponse: WorkspaceInfo{
+				WorkspaceGUID:   "MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAw",
+				WorkspaceKey:    "NEQrdnlkNS9qU2NCbXNBd1pPRi8wR09CUTVrdUZRYzlKVmFXK0hsbko1OGN5ZVBKY3dUcGtzK3JWbXZnY1hHbW15dWpMRE5FVlBpVDhwQjI3NGE5WWc9PQ==",
+				WorkspaceDomain: "b3BpbnNpZ2h0cy5henVyZS5jb20=",
+			},
+		},
+		{
+			dcFactory: func(outDir string, cs *api.ContainerService, ver string) deployCmd {
+				return deployCmd{
+					apimodelPath:     "./this/is/unused.json",
+					outputDirectory:  outDir,
+					forceOverwrite:   true,
+					location:         "chinaeast2",
+					containerService: cs,
+					apiVersion:       ver,
 
-		client: &armhelpers.MockAKSEngineClient{},
-		authProvider: &mockAuthProvider{
-			authArgs: &authArgs{},
+					client: &armhelpers.MockAKSEngineClient{},
+					authProvider: &mockAuthProvider{
+						authArgs: &authArgs{},
+					},
+				}
+			},
+			location: "chinaeast2",
+			expectedResponse: WorkspaceInfo{
+				WorkspaceGUID:   "MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAw",
+				WorkspaceKey:    "NEQrdnlkNS9qU2NCbXNBd1pPRi8wR09CUTVrdUZRYzlKVmFXK0hsbko1OGN5ZVBKY3dUcGtzK3JWbXZnY1hHbW15dWpMRE5FVlBpVDhwQjI3NGE5WWc9PQ==",
+				WorkspaceDomain: "b3BpbnNpZ2h0cy5henVyZS5jbg==",
+			},
+		},
+		{
+			dcFactory: func(outDir string, cs *api.ContainerService, ver string) deployCmd {
+				return deployCmd{
+					apimodelPath:     "./this/is/unused.json",
+					outputDirectory:  outDir,
+					forceOverwrite:   true,
+					location:         "usgovvirginia",
+					containerService: cs,
+					apiVersion:       ver,
+
+					client: &armhelpers.MockAKSEngineClient{},
+					authProvider: &mockAuthProvider{
+						authArgs: &authArgs{},
+					},
+				}
+			},
+			location: "usgovvirginia",
+			expectedResponse: WorkspaceInfo{
+				WorkspaceGUID:   "MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAw",
+				WorkspaceKey:    "NEQrdnlkNS9qU2NCbXNBd1pPRi8wR09CUTVrdUZRYzlKVmFXK0hsbko1OGN5ZVBKY3dUcGtzK3JWbXZnY1hHbW15dWpMRE5FVlBpVDhwQjI3NGE5WWc9PQ==",
+				WorkspaceDomain: "b3BpbnNpZ2h0cy5henVyZS51cw==",
+			},
+		},
+		{
+			dcFactory: func(outDir string, cs *api.ContainerService, ver string) deployCmd {
+				return deployCmd{
+					apimodelPath:     "./this/is/unused.json",
+					outputDirectory:  outDir,
+					forceOverwrite:   true,
+					location:         "germanynortheast",
+					containerService: cs,
+					apiVersion:       ver,
+
+					client: &armhelpers.MockAKSEngineClient{},
+					authProvider: &mockAuthProvider{
+						authArgs: &authArgs{},
+					},
+				}
+			},
+			location: "germanynortheast",
+			expectedResponse: WorkspaceInfo{
+				WorkspaceGUID:   "MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAw",
+				WorkspaceKey:    "NEQrdnlkNS9qU2NCbXNBd1pPRi8wR09CUTVrdUZRYzlKVmFXK0hsbko1OGN5ZVBKY3dUcGtzK3JWbXZnY1hHbW15dWpMRE5FVlBpVDhwQjI3NGE5WWc9PQ==",
+				WorkspaceDomain: "b3BpbnNpZ2h0cy5henVyZS5kZQ==",
+			},
 		},
 	}
-	err = autofillApimodel(deployCmd)
-	if err != nil {
-		t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
-	}
 
-	defer os.RemoveAll(deployCmd.outputDirectory)
+	for _, tc := range cases {
+		c := tc
+		t.Run(c.location, func(t *testing.T) {
+			t.Parallel()
 
-	k8sConfig := deployCmd.containerService.Properties.OrchestratorProfile.KubernetesConfig
+			dir, del := makeTmpDir(t)
+			defer del()
 
-	if k8sConfig == nil {
-		t.Fatalf("expected valid kubernetes config")
-	}
+			apiloader := &api.Apiloader{
+				Translator: nil,
+			}
 
-	if len(k8sConfig.Addons) != 1 {
-		t.Fatalf("expected one addon")
-	}
+			apimodel := ExampleAPIModelWithContainerMonitoringAddonWithWorkspaceGUIDAndKeyConfig
+			cs, ver, err := apiloader.DeserializeContainerService([]byte(apimodel), false, false, nil)
+			if err != nil {
+				t.Fatalf("unexpected error deserializing the example apimodel: %s", err)
+			}
 
-	addon := k8sConfig.Addons[0]
+			dc := c.dcFactory(dir, cs, ver)
+			dc.containerService.Location = c.location
+			err = autofillApimodel(&dc)
+			if err != nil {
+				t.Fatalf("unexpected error autofilling the example apimodel: %s", err)
+			}
 
-	if addon.Name != "container-monitoring" {
-		t.Fatalf("unexpected addon found : %s", addon.Name)
-	}
+			k8sConfig := dc.containerService.Properties.OrchestratorProfile.KubernetesConfig
+			if k8sConfig == nil {
+				t.Fatalf("expected valid kubernetes config")
+			}
+			if len(k8sConfig.Addons) != 1 {
+				t.Fatalf("expected one addon")
+			}
+			addon := k8sConfig.Addons[0]
+			if addon.Name != "container-monitoring" {
+				t.Fatalf("unexpected addon found : %s", addon.Name)
+			}
 
-	expectedWorkspaceGUIDInBase64 := "MDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAw"
-	if addon.Config["workspaceGuid"] != expectedWorkspaceGUIDInBase64 {
-		t.Fatalf("expected workspaceGuid : %s but got : %s", expectedWorkspaceGUIDInBase64, addon.Config["workspaceGuid"])
-	}
+			if addon.Config["workspaceGuid"] != c.expectedResponse.WorkspaceGUID {
+				t.Fatalf("expected workspaceGuid : %s but got : %s", c.expectedResponse.WorkspaceGUID, addon.Config["workspaceGuid"])
+			}
 
-	expectedWorkspaceKeyInBase64 := "NEQrdnlkNS9qU2NCbXNBd1pPRi8wR09CUTVrdUZRYzlKVmFXK0hsbko1OGN5ZVBKY3dUcGtzK3JWbXZnY1hHbW15dWpMRE5FVlBpVDhwQjI3NGE5WWc9PQ=="
-	if addon.Config["workspaceKey"] != expectedWorkspaceKeyInBase64 {
-		t.Fatalf("unexpected workspaceKey : %s", addon.Config["workspaceKey"])
-		t.Fatalf("expected workspaceKey : %s but got : %s", expectedWorkspaceKeyInBase64, addon.Config["workspaceKey"])
+			if addon.Config["workspaceKey"] != c.expectedResponse.WorkspaceKey {
+				t.Fatalf("expected workspaceKey : %s but got : %s", c.expectedResponse.WorkspaceKey, addon.Config["workspaceKey"])
+			}
+
+			if addon.Config["workspaceDomain"] != c.expectedResponse.WorkspaceDomain {
+				t.Fatalf("expected workspaceDomain : %s but got : %s", c.expectedResponse.WorkspaceDomain, addon.Config["workspaceDomain"])
+			}
+		})
 	}
 }

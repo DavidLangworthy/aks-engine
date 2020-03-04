@@ -317,38 +317,6 @@ func TestConvertAzureEnvironmentSpecConfigToVLabs(t *testing.T) {
 	}
 }
 
-func TestConvertContainerServiceToV20160330(t *testing.T) {
-	cs := getDefaultContainerService()
-	v20160330cs := ConvertContainerServiceToV20160330(cs)
-	if v20160330cs == nil {
-		t.Errorf("expected the converted containerService struct to be non-nil")
-	}
-}
-
-func TestConvertContainerServiceToV20160930(t *testing.T) {
-	cs := getDefaultContainerService()
-	v20160930cs := ConvertContainerServiceToV20160930(cs)
-	if v20160930cs == nil {
-		t.Errorf("expected the converted containerService struct to be non-nil")
-	}
-}
-
-func TestConvertContainerServiceToV20170131(t *testing.T) {
-	cs := getDefaultContainerService()
-	v20170131cs := ConvertContainerServiceToV20170131(cs)
-	if v20170131cs == nil {
-		t.Errorf("expected the converted containerService struct to be non-nil")
-	}
-}
-
-func TestConvertContainerServiceToV20170701(t *testing.T) {
-	cs := getDefaultContainerService()
-	v20170701cs := ConvertContainerServiceToV20170701(cs)
-	if v20170701cs == nil {
-		t.Errorf("expected the converted containerService struct to be non-nil")
-	}
-}
-
 func TestConvertContainerServiceToVLabs(t *testing.T) {
 	cs := getDefaultContainerService()
 	vlabsCS := ConvertContainerServiceToVLabs(cs)
@@ -572,7 +540,7 @@ func getDefaultContainerService() *ContainerService {
 					EtcdVersion:                     "3.0.0",
 					EtcdDiskSizeGB:                  "256",
 					EtcdEncryptionKey:               "sampleEncruptionKey",
-					AzureCNIVersion:                 "1.0.28",
+					AzureCNIVersion:                 "1.0.30",
 					AzureCNIURLLinux:                "https://mirror.azk8s.cn/kubernetes/azure-container-networking/linux",
 					AzureCNIURLWindows:              "https://mirror.azk8s.cn/kubernetes/azure-container-networking/windows",
 					KeyVaultSku:                     "Basic",
@@ -722,6 +690,39 @@ func TestPlatformFaultDomainCountToVLabs(t *testing.T) {
 	}
 }
 
+func TestPlatformUpdateDomainCountToVLabs(t *testing.T) {
+	cs := getDefaultContainerService()
+	cs.Properties.MasterProfile.PlatformUpdateDomainCount = to.IntPtr(3)
+	cs.Properties.AgentPoolProfiles[0].PlatformUpdateDomainCount = to.IntPtr(3)
+	vlabsCS := ConvertContainerServiceToVLabs(cs)
+	if vlabsCS == nil {
+		t.Errorf("expected the converted containerService struct to be non-nil")
+	}
+	if *vlabsCS.Properties.MasterProfile.PlatformUpdateDomainCount != 3 {
+		t.Errorf("expected the master profile platform FD to be 3")
+	}
+	if *vlabsCS.Properties.AgentPoolProfiles[0].PlatformUpdateDomainCount != 3 {
+		t.Errorf("expected the agent pool profile platform FD to be 3")
+	}
+}
+
+func TestConvertTelemetryProfileToVLabs(t *testing.T) {
+	cs := getDefaultContainerService()
+	cs.Properties.TelemetryProfile = &TelemetryProfile{
+		ApplicationInsightsKey: "app_insights_key",
+	}
+
+	vlabsCS := ConvertContainerServiceToVLabs(cs)
+
+	if vlabsCS.Properties.TelemetryProfile == nil {
+		t.Error("expected ConvertContainerServiceToVLabs to set TelemtryProfile")
+	}
+
+	if vlabsCS.Properties.TelemetryProfile.ApplicationInsightsKey != "app_insights_key" {
+		t.Error("TelemetryProfile.APplicationInsightsKey not converted")
+	}
+}
+
 func TestConvertWindowsProfileToVlabs(t *testing.T) {
 	falseVar := false
 
@@ -800,5 +801,109 @@ func TestConvertWindowsProfileToVlabs(t *testing.T) {
 				t.Errorf("unexpected diff testing convertWindowsProfileToVLabs: %s", diff)
 			}
 		})
+	}
+}
+
+func TestConvertComponentsToVlabs(t *testing.T) {
+	k := &KubernetesConfig{
+		Components: []KubernetesComponent{
+			{
+				Name:    "component-0",
+				Enabled: to.BoolPtr(true),
+				Containers: []KubernetesContainerSpec{
+					{
+						Name:           "component-0-container-0",
+						Image:          "baz",
+						CPURequests:    "1",
+						MemoryRequests: "200m",
+						CPULimits:      "2",
+						MemoryLimits:   "400m",
+					},
+					{
+						Name:           "component-0-container-1",
+						Image:          "baz-1",
+						CPURequests:    "1-1",
+						MemoryRequests: "200m-1",
+						CPULimits:      "2-1",
+						MemoryLimits:   "400m-1",
+					},
+				},
+				Config: map[string]string{
+					"foo":     "bar",
+					"command": "my-command",
+				},
+				Data: "my-data",
+			},
+			{
+				Name:    "component-1",
+				Enabled: to.BoolPtr(false),
+				Containers: []KubernetesContainerSpec{
+					{
+						Name:           "component-1-container-0",
+						Image:          "baz",
+						CPURequests:    "1",
+						MemoryRequests: "200m",
+						CPULimits:      "2",
+						MemoryLimits:   "400m",
+					},
+					{
+						Name:           "component-1-container-1",
+						Image:          "baz-1",
+						CPURequests:    "1-1",
+						MemoryRequests: "200m-1",
+						CPULimits:      "2-1",
+						MemoryLimits:   "400m-1",
+					},
+				},
+				Config: map[string]string{
+					"foo":     "bar",
+					"command": "my-command",
+				},
+				Data: "my-data",
+			},
+		},
+	}
+	vk := &vlabs.KubernetesConfig{}
+	convertComponentsToVlabs(k, vk)
+	for i, component := range k.Components {
+		if vk.Components[i].Name != component.Name {
+			t.Errorf("unexpected Component.Name property %s after convertComponentsToVlabs conversion, expected %s", vk.Components[i].Name, component.Name)
+		}
+		if to.Bool(vk.Components[i].Enabled) != to.Bool(component.Enabled) {
+			t.Errorf("unexpected Component.Enabled property %t after convertComponentsToVlabs conversion, expected %t", to.Bool(vk.Components[i].Enabled), to.Bool(component.Enabled))
+		}
+		if vk.Components[i].Data != component.Data {
+			t.Errorf("unexpected Component.Data property %s after convertComponentsToVlabs conversion, expected %s", vk.Components[i].Data, component.Data)
+		}
+		for j, container := range component.Containers {
+			if vk.Components[i].Containers[j].Name != container.Name {
+				t.Errorf("unexpected Container.Name property %s after convertComponentsToVlabs conversion, expected %s", vk.Components[i].Containers[j].Name, container.Name)
+			}
+			if vk.Components[i].Containers[j].Image != container.Image {
+				t.Errorf("unexpected Container.Image property %s after convertComponentsToVlabs conversion, expected %s", vk.Components[i].Containers[j].Image, container.Image)
+			}
+			if vk.Components[i].Containers[j].CPURequests != container.CPURequests {
+				t.Errorf("unexpected Container.CPURequests property %s after convertComponentsToVlabs conversion, expected %s", vk.Components[i].Containers[j].CPURequests, container.CPURequests)
+			}
+			if vk.Components[i].Containers[j].MemoryRequests != container.MemoryRequests {
+				t.Errorf("unexpected Container.MemoryRequests property %s after convertComponentsToVlabs conversion, expected %s", vk.Components[i].Containers[j].MemoryRequests, container.MemoryRequests)
+			}
+			if vk.Components[i].Containers[j].CPULimits != container.CPULimits {
+				t.Errorf("unexpected Container.CPULimits property %s after convertComponentsToVlabs conversion, expected %s", vk.Components[i].Containers[j].CPULimits, container.CPULimits)
+			}
+			if vk.Components[i].Containers[j].MemoryLimits != container.MemoryLimits {
+				t.Errorf("unexpected Container.MemoryLimits property %s after convertComponentsToVlabs conversion, expected %s", vk.Components[i].Containers[j].MemoryLimits, container.MemoryLimits)
+			}
+		}
+		for key, val := range component.Config {
+			if vk.Components[i].Config[key] != val {
+				t.Errorf("unexpected Component.Config %s=%s after convertComponentsToVlabs conversion, expected %s=%s", key, vk.Components[i].Config[key], key, val)
+			}
+		}
+		for key, val := range vk.Components[i].Config {
+			if component.Config[key] != val {
+				t.Errorf("unexpected Component.Config %s=%s after convertComponentsToVlabs conversion, expected %s=%s", key, component.Config[key], key, val)
+			}
+		}
 	}
 }

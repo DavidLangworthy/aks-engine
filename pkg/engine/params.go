@@ -42,11 +42,6 @@ func getParameters(cs *api.ContainerService, generatorCode string, aksEngineVers
 	linuxProfile := properties.LinuxProfile
 	if linuxProfile != nil {
 		addValue(parametersMap, "linuxAdminUsername", linuxProfile.AdminUsername)
-		if linuxProfile.CustomSearchDomain != nil {
-			addValue(parametersMap, "searchDomainName", linuxProfile.CustomSearchDomain.Name)
-			addValue(parametersMap, "searchDomainRealmUser", linuxProfile.CustomSearchDomain.RealmUser)
-			addValue(parametersMap, "searchDomainRealmPassword", linuxProfile.CustomSearchDomain.RealmPassword)
-		}
 		if linuxProfile.CustomNodesDNS != nil {
 			addValue(parametersMap, "dnsServer", linuxProfile.CustomNodesDNS.DNSServer)
 		}
@@ -83,6 +78,14 @@ func getParameters(cs *api.ContainerService, generatorCode string, aksEngineVers
 	}
 	if properties.HostedMasterProfile != nil {
 		addValue(parametersMap, "masterSubnet", properties.HostedMasterProfile.Subnet)
+
+		// For AKS, VnetCidrs of the default (the first) agent pool will be set when users create a k8s
+		// cluster with a custom vnet. Set vnetCidr if a custom vnet is used so the address space can be
+		// added into the ExceptionList of Windows nodes. Otherwise, the default value `10.0.0.0/8` will
+		// be added into the ExceptionList and it does not work if users use other ip address ranges.
+		if len(properties.AgentPoolProfiles) > 0 && len(properties.AgentPoolProfiles[0].VnetCidrs) > 0 {
+			addValue(parametersMap, "vnetCidr", properties.AgentPoolProfiles[0].VnetCidrs[0])
+		}
 	}
 
 	if linuxProfile != nil {
@@ -199,6 +202,11 @@ func getParameters(cs *api.ContainerService, generatorCode string, aksEngineVers
 		}
 		if len(agentProfile.Ports) > 0 {
 			addValue(parametersMap, fmt.Sprintf("%sEndpointDNSNamePrefix", agentProfile.Name), agentProfile.DNSPrefix)
+		}
+
+		if !agentProfile.IsAvailabilitySets() && agentProfile.IsSpotScaleSet() {
+			addValue(parametersMap, fmt.Sprintf("%sScaleSetPriority", agentProfile.Name), agentProfile.ScaleSetPriority)
+			addValue(parametersMap, fmt.Sprintf("%sScaleSetEvictionPolicy", agentProfile.Name), agentProfile.ScaleSetEvictionPolicy)
 		}
 
 		// Unless distro is defined, default distro is configured by defaults#setAgentProfileDefaults

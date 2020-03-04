@@ -1,3 +1,4 @@
+//+build test
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
@@ -78,7 +79,8 @@ func GetConfigWithRetry(sleep, timeout time.Duration) (*Config, error) {
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- GetConfigAsync():
+			default:
+				ch <- GetConfigAsync()
 				time.Sleep(sleep)
 			}
 		}

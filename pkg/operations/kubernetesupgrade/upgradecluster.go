@@ -13,7 +13,7 @@ import (
 	"github.com/Azure/aks-engine/pkg/armhelpers"
 	"github.com/Azure/aks-engine/pkg/armhelpers/utils"
 	"github.com/Azure/aks-engine/pkg/i18n"
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -244,8 +244,6 @@ func (uc *UpgradeCluster) getClusterNodeStatus(kubeClient armhelpers.KubernetesC
 		}
 	}
 
-	availabilitySetIDs := []string{}
-
 	for vmListPage, err := uc.Client.ListVirtualMachines(ctx, resourceGroup); vmListPage.NotDone(); err = vmListPage.Next() {
 		if err != nil {
 			return err
@@ -259,10 +257,6 @@ func (uc *UpgradeCluster) getClusterNodeStatus(kubeClient armhelpers.KubernetesC
 				continue
 			}
 			currentVersion := uc.getNodeVersion(kubeClient, strings.ToLower(*vm.Name), vm.Tags, true)
-
-			if vm.AvailabilitySet != nil {
-				availabilitySetIDs = append(availabilitySetIDs, *vm.AvailabilitySet.ID)
-			}
 
 			if uc.Force {
 				if currentVersion == "" {
@@ -288,13 +282,6 @@ func (uc *UpgradeCluster) getClusterNodeStatus(kubeClient armhelpers.KubernetesC
 			}
 		}
 	}
-
-	// set the VMAS platformFaultDomainCount to match the existing value
-	fdCount, err := uc.Client.GetAvailabilitySetFaultDomainCount(ctx, resourceGroup, availabilitySetIDs)
-	if err != nil {
-		return err
-	}
-	uc.DataModel.SetPlatformFaultDomainCount(fdCount)
 
 	return nil
 }

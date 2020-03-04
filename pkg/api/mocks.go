@@ -6,13 +6,15 @@ package api
 import (
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/to"
-	"github.com/gofrs/uuid"
+	"github.com/google/uuid"
+
+	"github.com/Azure/aks-engine/pkg/api/common"
 )
 
 // CreateMockAgentPoolProfile creates a mock AgentPoolResource for testing
 func CreateMockAgentPoolProfile(agentPoolName, orchestratorVersion string, provisioningState ProvisioningState, agentCount int) *AgentPoolResource {
 	agentPoolResource := AgentPoolResource{}
-	agentPoolResource.ID = uuid.Must(uuid.NewV4()).String()
+	agentPoolResource.ID = uuid.Must(uuid.NewRandom()).String()
 	agentPoolResource.Location = "westus2"
 	agentPoolResource.Name = agentPoolName
 
@@ -28,7 +30,7 @@ func CreateMockAgentPoolProfile(agentPoolName, orchestratorVersion string, provi
 // CreateMockContainerService returns a mock container service for testing purposes
 func CreateMockContainerService(containerServiceName, orchestratorVersion string, masterCount, agentCount int, certs bool) *ContainerService {
 	cs := ContainerService{}
-	cs.ID = uuid.Must(uuid.NewV4()).String()
+	cs.ID = uuid.Must(uuid.NewRandom()).String()
 	cs.Location = "eastus"
 	cs.Name = containerServiceName
 
@@ -84,8 +86,11 @@ func CreateMockContainerService(containerServiceName, orchestratorVersion string
 		NetworkPolicy:           DefaultNetworkPolicy,
 		EtcdVersion:             DefaultEtcdVersion,
 		MobyVersion:             DefaultMobyVersion,
+		ContainerdVersion:       DefaultContainerdVersion,
+		LoadBalancerSku:         DefaultLoadBalancerSku,
 		KubeletConfig:           make(map[string]string),
 		ControllerManagerConfig: make(map[string]string),
+		KubernetesImageBaseType: common.KubernetesImageBaseTypeGCR,
 	}
 
 	cs.Properties.CertificateProfile = &CertificateProfile{}
@@ -231,4 +236,28 @@ func GetMockPropertiesWithCustomCloudProfile(name string, hasCustomCloudProfile,
 		p.CustomCloudProfile.AuthenticationMethod = ClientSecretAuthMethod
 	}
 	return p
+}
+
+func getMockAddon(name string) KubernetesAddon {
+	return KubernetesAddon{
+		Name: name,
+		Containers: []KubernetesContainerSpec{
+			{
+				Name:           name,
+				CPURequests:    "50m",
+				MemoryRequests: "150Mi",
+				CPULimits:      "50m",
+				MemoryLimits:   "150Mi",
+			},
+		},
+		Pools: []AddonNodePoolsConfig{
+			{
+				Name: "pool1",
+				Config: map[string]string{
+					"min-nodes": "3",
+					"max-nodes": "3",
+				},
+			},
+		},
+	}
 }

@@ -5,7 +5,6 @@ package engine
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/Azure/go-autorest/autorest/to"
 
@@ -22,74 +21,37 @@ func assignKubernetesParameters(properties *api.Properties, parametersMap params
 	if orchestratorProfile.IsKubernetes() {
 
 		k8sVersion := orchestratorProfile.OrchestratorVersion
-		k8sComponents := api.K8sComponentsByVersionMap[k8sVersion]
+		k8sComponents := api.GetK8sComponentsByVersionMap(properties.OrchestratorProfile.KubernetesConfig)[k8sVersion]
 		kubernetesConfig := orchestratorProfile.KubernetesConfig
 		kubernetesImageBase := kubernetesConfig.KubernetesImageBase
-		mcrKubernetesImageBase := kubernetesConfig.MCRKubernetesImageBase
-		hyperkubeImageBase := kubernetesConfig.KubernetesImageBase
 
 		if properties.IsAzureStackCloud() {
 			kubernetesImageBase = cloudSpecConfig.KubernetesSpecConfig.KubernetesImageBase
 		}
 
 		if kubernetesConfig != nil {
-			if to.Bool(kubernetesConfig.UseCloudControllerManager) {
-				kubernetesCcmSpec := kubernetesImageBase + k8sComponents["ccm"]
-				if kubernetesConfig.CustomCcmImage != "" {
-					kubernetesCcmSpec = kubernetesConfig.CustomCcmImage
-				}
-
-				addValue(parametersMap, "kubernetesCcmImageSpec", kubernetesCcmSpec)
+			kubeProxySpec := kubernetesImageBase + k8sComponents[common.KubeProxyAddonName]
+			if kubernetesConfig.CustomKubeProxyImage != "" {
+				kubeProxySpec = kubernetesConfig.CustomKubeProxyImage
 			}
-
-			kubernetesHyperkubeSpec := hyperkubeImageBase + k8sComponents["hyperkube"]
-			if properties.IsAzureStackCloud() {
-				kubernetesHyperkubeSpec = kubernetesHyperkubeSpec + AzureStackSuffix
+			addValue(parametersMap, "kubeProxySpec", kubeProxySpec)
+			if kubernetesConfig.CustomKubeBinaryURL != "" {
+				addValue(parametersMap, "kubeBinaryURL", kubernetesConfig.CustomKubeBinaryURL)
 			}
-			if kubernetesConfig.CustomHyperkubeImage != "" {
-				kubernetesHyperkubeSpec = kubernetesConfig.CustomHyperkubeImage
-			}
-			addValue(parametersMap, "kubernetesHyperkubeSpec", kubernetesHyperkubeSpec)
 
 			addValue(parametersMap, "kubeDNSServiceIP", kubernetesConfig.DNSServiceIP)
-			if kubernetesConfig.PrivateAzureRegistryServer != "" {
-				addValue(parametersMap, "privateAzureRegistryServer", kubernetesConfig.PrivateAzureRegistryServer)
-			}
-			addValue(parametersMap, "kubernetesAddonManagerSpec", kubernetesImageBase+k8sComponents["addonmanager"])
-			if orchestratorProfile.NeedsExecHealthz() {
-				addValue(parametersMap, "kubernetesExecHealthzSpec", kubernetesImageBase+k8sComponents["exechealthz"])
-			}
-			addValue(parametersMap, "kubernetesDNSSidecarSpec", kubernetesImageBase+k8sComponents["k8s-dns-sidecar"])
 			if kubernetesConfig.IsAADPodIdentityEnabled() {
-				aadPodIdentityAddon := kubernetesConfig.GetAddonByName(AADPodIdentityAddonName)
-				aadIndex := aadPodIdentityAddon.GetAddonContainersIndexByName(AADPodIdentityAddonName)
+				aadPodIdentityAddon := kubernetesConfig.GetAddonByName(common.AADPodIdentityAddonName)
+				aadIndex := aadPodIdentityAddon.GetAddonContainersIndexByName(common.AADPodIdentityAddonName)
 				if aadIndex > -1 {
 					addValue(parametersMap, "kubernetesAADPodIdentityEnabled", to.Bool(aadPodIdentityAddon.Enabled))
 				}
 			}
-			if kubernetesConfig.IsAddonEnabled(api.ACIConnectorAddonName) {
+			if kubernetesConfig.IsAddonEnabled(common.ACIConnectorAddonName) {
 				addValue(parametersMap, "kubernetesACIConnectorEnabled", true)
 			} else {
 				addValue(parametersMap, "kubernetesACIConnectorEnabled", false)
 			}
-			if kubernetesConfig.IsAddonEnabled(api.ClusterAutoscalerAddonName) {
-				clusterAutoscalerAddon := kubernetesConfig.GetAddonByName(ClusterAutoscalerAddonName)
-				clusterAutoScalerIndex := clusterAutoscalerAddon.GetAddonContainersIndexByName(ClusterAutoscalerAddonName)
-				if clusterAutoScalerIndex > -1 {
-					addValue(parametersMap, "kubernetesClusterAutoscalerAzureCloud", cloudSpecConfig.CloudName)
-					addValue(parametersMap, "kubernetesClusterAutoscalerEnabled", true)
-					addValue(parametersMap, "kubernetesClusterAutoscalerUseManagedIdentity", strings.ToLower(strconv.FormatBool(kubernetesConfig.UseManagedIdentity)))
-				}
-			} else {
-				addValue(parametersMap, "kubernetesClusterAutoscalerEnabled", false)
-			}
-			if common.IsKubernetesVersionGe(k8sVersion, "1.12.0") {
-				addValue(parametersMap, "kubernetesCoreDNSSpec", kubernetesImageBase+k8sComponents["coredns"])
-			} else {
-				addValue(parametersMap, "kubernetesKubeDNSSpec", kubernetesImageBase+k8sComponents["kube-dns"])
-				addValue(parametersMap, "kubernetesDNSMasqSpec", kubernetesImageBase+k8sComponents["dnsmasq"])
-			}
-			addValue(parametersMap, "kubernetesPodInfraContainerSpec", mcrKubernetesImageBase+k8sComponents["pause"])
 			addValue(parametersMap, "cloudproviderConfig", api.CloudProviderConfig{
 				CloudProviderBackoffMode:          kubernetesConfig.CloudProviderBackoffMode,
 				CloudProviderBackoff:              kubernetesConfig.CloudProviderBackoff,
@@ -102,12 +64,13 @@ func assignKubernetesParameters(properties *api.Properties, parametersMap params
 				CloudProviderRateLimitQPSWrite:    strconv.FormatFloat(kubernetesConfig.CloudProviderRateLimitQPSWrite, 'f', -1, 64),
 				CloudProviderRateLimitBucket:      kubernetesConfig.CloudProviderRateLimitBucket,
 				CloudProviderRateLimitBucketWrite: kubernetesConfig.CloudProviderRateLimitBucketWrite,
+				CloudProviderDisableOutboundSNAT:  kubernetesConfig.CloudProviderDisableOutboundSNAT,
 			})
 			addValue(parametersMap, "kubeClusterCidr", kubernetesConfig.ClusterSubnet)
-			addValue(parametersMap, "kubernetesKubeletClusterDomain", kubernetesConfig.KubeletConfig["--cluster-domain"])
 			addValue(parametersMap, "dockerBridgeCidr", kubernetesConfig.DockerBridgeSubnet)
 			addValue(parametersMap, "networkPolicy", kubernetesConfig.NetworkPolicy)
 			addValue(parametersMap, "networkPlugin", kubernetesConfig.NetworkPlugin)
+			addValue(parametersMap, "networkMode", kubernetesConfig.NetworkMode)
 			addValue(parametersMap, "containerRuntime", kubernetesConfig.ContainerRuntime)
 			addValue(parametersMap, "containerdDownloadURLBase", cloudSpecConfig.KubernetesSpecConfig.ContainerdDownloadURLBase)
 			addValue(parametersMap, "cniPluginsURL", cloudSpecConfig.KubernetesSpecConfig.CNIPluginsDownloadURL)
@@ -131,14 +94,14 @@ func assignKubernetesParameters(properties *api.Properties, parametersMap params
 			addValue(parametersMap, "enableAggregatedAPIs", kubernetesConfig.EnableAggregatedAPIs)
 
 			if properties.HasWindows() {
-				// Kubernetes packages as zip file as created by scripts/build-windows-k8s.sh
+				// Kubernetes packages as zip file as created by Azure Pipelines
 				// will be removed in future release as if gets phased out (https://github.com/Azure/aks-engine/issues/3851)
 				kubeBinariesSASURL := kubernetesConfig.CustomWindowsPackageURL
 				if kubeBinariesSASURL == "" {
 					if properties.IsAzureStackCloud() {
-						kubeBinariesSASURL = cloudSpecConfig.KubernetesSpecConfig.KubeBinariesSASURLBase + AzureStackPrefix + k8sComponents["windowszip"]
+						kubeBinariesSASURL = cloudSpecConfig.KubernetesSpecConfig.KubeBinariesSASURLBase + common.AzureStackPrefix + k8sComponents[common.WindowsArtifactComponentName]
 					} else {
-						kubeBinariesSASURL = cloudSpecConfig.KubernetesSpecConfig.KubeBinariesSASURLBase + k8sComponents["windowszip"]
+						kubeBinariesSASURL = cloudSpecConfig.KubernetesSpecConfig.KubeBinariesSASURLBase + k8sComponents[common.WindowsArtifactComponentName]
 					}
 				}
 				addValue(parametersMap, "kubeBinariesSASURL", kubeBinariesSASURL)
@@ -256,16 +219,9 @@ func assignKubernetesParameters(properties *api.Properties, parametersMap params
 			addValue(parametersMap, "containerdVersion", properties.OrchestratorProfile.KubernetesConfig.ContainerdVersion)
 		}
 
-		if properties.AADProfile != nil {
-			addValue(parametersMap, "aadTenantId", properties.AADProfile.TenantID)
-			if properties.AADProfile.AdminGroupID != "" {
-				addValue(parametersMap, "aadAdminGroupId", properties.AADProfile.AdminGroupID)
-			}
-		}
-
-		if kubernetesConfig != nil && kubernetesConfig.IsAddonEnabled(AppGwIngressAddonName) {
-			addValue(parametersMap, "appGwSku", kubernetesConfig.GetAddonByName(AppGwIngressAddonName).Config["appgw-sku"])
-			addValue(parametersMap, "appGwSubnet", kubernetesConfig.GetAddonByName(AppGwIngressAddonName).Config["appgw-subnet"])
+		if kubernetesConfig != nil && kubernetesConfig.IsAddonEnabled(common.AppGwIngressAddonName) {
+			addValue(parametersMap, "appGwSku", kubernetesConfig.GetAddonByName(common.AppGwIngressAddonName).Config["appgw-sku"])
+			addValue(parametersMap, "appGwSubnet", kubernetesConfig.GetAddonByName(common.AppGwIngressAddonName).Config["appgw-subnet"])
 		}
 	}
 }

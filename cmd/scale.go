@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -256,8 +257,6 @@ func (sc *scaleCmd) run(cmd *cobra.Command, args []string) error {
 	}
 
 	if sc.agentPool.IsAvailabilitySets() {
-		availabilitySetIDs := []string{}
-
 		for vmsListPage, err := sc.client.ListVirtualMachines(ctx, sc.resourceGroupName); vmsListPage.NotDone(); err = vmsListPage.Next() {
 			if err != nil {
 				return errors.Wrap(err, "failed to get VMs in the resource group")
@@ -270,12 +269,8 @@ func (sc *scaleCmd) run(cmd *cobra.Command, args []string) error {
 					continue
 				}
 
-				if vm.AvailabilitySet != nil {
-					availabilitySetIDs = append(availabilitySetIDs, *vm.AvailabilitySet.ID)
-				}
-
 				osPublisher := vm.StorageProfile.ImageReference.Publisher
-				if osPublisher != nil && strings.EqualFold(*osPublisher, "MicrosoftWindowsServer") {
+				if osPublisher != nil && (strings.EqualFold(*osPublisher, "MicrosoftWindowsServer") || strings.EqualFold(*osPublisher, "microsoft-aks")) {
 					_, _, winPoolIndex, index, err = utils.WindowsVMNameParts(vmName)
 				} else {
 					_, _, index, err = utils.K8sLinuxVMNameParts(vmName)
@@ -290,7 +285,7 @@ func (sc *scaleCmd) run(cmd *cobra.Command, args []string) error {
 		}
 		sortedIndexes := sort.IntSlice(indexes)
 		sortedIndexes.Sort()
-		indexes = []int(sortedIndexes)
+		indexes = sortedIndexes
 		currentNodeCount = len(indexes)
 
 		if currentNodeCount == sc.newDesiredAgentCount {
@@ -298,13 +293,6 @@ func (sc *scaleCmd) run(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		highestUsedIndex = indexes[len(indexes)-1]
-
-		// set the VMAS platformFaultDomainCount to match the existing value
-		fdCount, err := sc.client.GetAvailabilitySetFaultDomainCount(ctx, sc.resourceGroupName, availabilitySetIDs)
-		if err != nil {
-			return err
-		}
-		sc.containerService.SetPlatformFaultDomainCount(fdCount)
 
 		// VMAS Scale down Scenario
 		if currentNodeCount > sc.newDesiredAgentCount {
@@ -387,8 +375,8 @@ func (sc *scaleCmd) run(cmd *cobra.Command, args []string) error {
 				return errors.Wrap(err, "failed to get VMSS list in the resource group")
 			}
 			for _, vmss := range vmssListPage.Values() {
-				vmName := *vmss.Name
-				if !sc.vmInAgentPool(vmName, vmss.Tags) {
+				vmssName := *vmss.Name
+				if !sc.vmInAgentPool(vmssName, vmss.Tags) {
 					continue
 				}
 
@@ -402,10 +390,13 @@ func (sc *scaleCmd) run(cmd *cobra.Command, args []string) error {
 					}
 				}
 
-				osPublisher := vmss.VirtualMachineProfile.StorageProfile.ImageReference.Publisher
-				if osPublisher != nil && strings.EqualFold(*osPublisher, "MicrosoftWindowsServer") {
-					_, _, winPoolIndex, _, err = utils.WindowsVMNameParts(vmName)
-					log.Errorln(err)
+				if sc.agentPool.OSType == api.Windows {
+					winPoolIndexStr := vmssName[len(vmssName)-2:]
+					var err error
+					winPoolIndex, err = strconv.Atoi(winPoolIndexStr)
+					if err != nil {
+						return errors.Wrap(err, "failed to get Windows pool index from VMSS name")
+					}
 				}
 
 				currentNodeCount = int(*vmss.Sku.Capacity)
@@ -483,6 +474,9 @@ func (sc *scaleCmd) run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return errors.Wrapf(err, "error transforming the template for scaling template %s", sc.apiModelPath)
 		}
+
+		transformer.RemoveImmutableResourceProperties(sc.logger, templateJSON)
+
 		if sc.agentPool.IsAvailabilitySets() {
 			addValue(parametersJSON, fmt.Sprintf("%sOffset", sc.agentPool.Name), highestUsedIndex+1)
 		}

@@ -33,13 +33,16 @@ test/e2e/kubernetes/translations/
 # test outputs
 cmd/_test_output
 test/e2e/kubernetes/kubernetes.test
+*.test
+*.coverprofile
 
 # packer
-packer/settings.json
-packer/sp.json
+vhd/packer/settings.json
+vhd/packer/sp.json
 
 .idea
 .vs
 
 # exclude vendor directory from gitignore
 !/vendor/**/*
+!/test/e2e/vendor/**/*

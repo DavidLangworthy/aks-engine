@@ -47,7 +47,7 @@ const (
 	// DockerCEDockerComposeVersion is the Docker Compose version
 	DockerCEDockerComposeVersion = "1.14.0"
 	// KubernetesWindowsDockerVersion is the default version for docker on Windows nodes in kubernetes
-	KubernetesWindowsDockerVersion = "19.03.2"
+	KubernetesWindowsDockerVersion = "19.03.5"
 	// KubernetesDefaultWindowsSku is the default SKU for Windows VMs in kubernetes
 	KubernetesDefaultWindowsSku = "Datacenter-Core-1809-with-Containers-smalldisk"
 )
@@ -98,6 +98,8 @@ const (
 	ScaleSetPriorityRegular = "Regular"
 	// ScaleSetPriorityLow means the ScaleSet will use Low-priority VMs
 	ScaleSetPriorityLow = "Low"
+	// ScaleSetPrioritySpot means the ScaleSet will use Spot VMs
+	ScaleSetPrioritySpot = "Spot"
 	// ScaleSetEvictionPolicyDelete is the default Eviction Policy for Low-priority VM ScaleSets
 	ScaleSetEvictionPolicyDelete = "Delete"
 	// ScaleSetEvictionPolicyDeallocate means a Low-priority VM ScaleSet will deallocate, rather than delete, VMs.
@@ -126,11 +128,15 @@ const publicAgentPoolSuffix = "-public"
 
 const (
 	// DefaultHeapsterAddonEnabled determines the aks-engine provided default for enabling heapster addon
-	DefaultHeapsterAddonEnabled = true
+	DefaultHeapsterAddonEnabled = false
 	// DefaultTillerAddonEnabled determines the aks-engine provided default for enabling tiller addon
 	DefaultTillerAddonEnabled = false
 	// DefaultAADPodIdentityAddonEnabled determines the aks-engine provided default for enabling aad-pod-identity addon
 	DefaultAADPodIdentityAddonEnabled = false
+	// DefaultAzurePolicyAddonEnabled determines the aks-engine provided default for enabling azure policy addon
+	DefaultAzurePolicyAddonEnabled = false
+	// DefaultNodeProblemDetectorAddonEnabled determines the aks-engine provided default for enabling the node problem detector addon
+	DefaultNodeProblemDetectorAddonEnabled = false
 	// DefaultACIConnectorAddonEnabled determines the aks-engine provided default for enabling aci connector addon
 	DefaultACIConnectorAddonEnabled = false
 	// DefaultAppGwIngressAddonEnabled determines the aks-engine provided default for enabling appgw ingress addon
@@ -153,6 +159,12 @@ const (
 	DefaultReschedulerAddonEnabled = false
 	// DefaultAzureCNIMonitoringAddonEnabled determines the aks-engine provided default for enabling azurecni-network monitoring addon
 	DefaultAzureCNIMonitoringAddonEnabled = true
+	// DefaultKubeDNSAddonEnabled determines the aks-engine provided default for enabling coredns addon
+	DefaultKubeDNSAddonEnabled = false
+	// DefaultCoreDNSAddonEnabled determines the aks-engine provided default for enabling coredns addon
+	DefaultCoreDNSAddonEnabled = true
+	// DefaultKubeProxyAddonEnabled determines the aks-engine provided default for enabling kube-proxy addon
+	DefaultKubeProxyAddonEnabled = true
 	// DefaultRBACEnabled determines the aks-engine provided default for enabling kubernetes RBAC
 	DefaultRBACEnabled = true
 	// DefaultUseInstanceMetadata determines the aks-engine provided default for enabling Azure cloudprovider instance metadata service
@@ -177,44 +189,6 @@ const (
 	DefaultDNSAutoscalerAddonEnabled = false
 	// DefaultIPMasqAgentAddonEnabled enables the ip-masq-agent addon
 	DefaultIPMasqAgentAddonEnabled = true
-	// HeapsterAddonName is the name of the heapster addon
-	HeapsterAddonName = "heapster"
-	// TillerAddonName is the name of the tiller addon deployment
-	TillerAddonName = "tiller"
-	// AADPodIdentityAddonName is the name of the aad-pod-identity addon deployment
-	AADPodIdentityAddonName = "aad-pod-identity"
-	// ACIConnectorAddonName is the name of the aci-connector addon deployment
-	ACIConnectorAddonName = "aci-connector"
-	// AppGwIngressAddonName appgw addon
-	AppGwIngressAddonName = "appgw-ingress"
-	// AzureDiskCSIDriverAddonName is the name of Azure Disk CSI Driver addon
-	AzureDiskCSIDriverAddonName = "azuredisk-csi-driver"
-	// AzureFileCSIDriverAddonName is the name of Azure File CSI Driver addon
-	AzureFileCSIDriverAddonName = "azurefile-csi-driver"
-	// ClusterAutoscalerAddonName is the name of the cluster autoscaler addon deployment
-	ClusterAutoscalerAddonName = "cluster-autoscaler"
-	// BlobfuseFlexVolumeAddonName is the name of the blobfuse flexvolume addon
-	BlobfuseFlexVolumeAddonName = "blobfuse-flexvolume"
-	// SMBFlexVolumeAddonName is the name of the smb flexvolume addon
-	SMBFlexVolumeAddonName = "smb-flexvolume"
-	// KeyVaultFlexVolumeAddonName is the name of the key vault flexvolume addon deployment
-	KeyVaultFlexVolumeAddonName = "keyvault-flexvolume"
-	// DashboardAddonName is the name of the kubernetes-dashboard addon deployment
-	DashboardAddonName = "kubernetes-dashboard"
-	// ReschedulerAddonName is the name of the rescheduler addon deployment
-	ReschedulerAddonName = "rescheduler"
-	// MetricsServerAddonName is the name of the kubernetes metrics server addon deployment
-	MetricsServerAddonName = "metrics-server"
-	// NVIDIADevicePluginAddonName is the name of the NVIDIA device plugin addon deployment
-	NVIDIADevicePluginAddonName = "nvidia-device-plugin"
-	// ContainerMonitoringAddonName is the name of the kubernetes Container Monitoring addon deployment
-	ContainerMonitoringAddonName = "container-monitoring"
-	// CalicoAddonName is the name of calico daemonset addon
-	CalicoAddonName = "calico-daemonset"
-	// IPMASQAgentAddonName is the name of the ip masq agent addon
-	IPMASQAgentAddonName = "ip-masq-agent"
-	// PodSecurityPolicyAddonName is the name of the PodSecurityPolicy addon
-	PodSecurityPolicyAddonName = "pod-security-policy"
 	// DefaultPrivateClusterEnabled determines the aks-engine provided default for enabling kubernetes Private Cluster
 	DefaultPrivateClusterEnabled = false
 	// NetworkPolicyAzure is the string expression for Azure CNI network policy manager
@@ -240,8 +214,6 @@ const (
 	DefaultVMSSOverProvisioningEnabled = false
 	// DefaultAuditDEnabled determines the aks-engine provided default for enabling auditd
 	DefaultAuditDEnabled = false
-	// DNSAutoscalerAddonName is the name of the dns-autoscaler addon
-	DNSAutoscalerAddonName = "dns-autoscaler"
 	// DefaultUseCosmos determines if the cluster will use cosmos as etcd storage
 	DefaultUseCosmos = false
 	// etcdEndpointURIFmt is the name format for a typical etcd account uri
@@ -258,6 +230,26 @@ const (
 	// DefaultOutboundRuleIdleTimeoutInMinutes determines the aks-engine provided default for IdleTimeoutInMinutes of the OutboundRule of the agent loadbalancer
 	// This value is set greater than the default Linux idle timeout (15.4 min): https://pracucci.com/linux-tcp-rto-min-max-and-tcp-retries2.html
 	DefaultOutboundRuleIdleTimeoutInMinutes = 30
+	// AddonModeEnsureExists
+	AddonModeEnsureExists = "EnsureExists"
+	// AddonModeReconcile
+	AddonModeReconcile = "Reconcile"
+	// VMSSVMType is the string const for the vmss VM Type
+	VMSSVMType = "vmss"
+	// StandardVMType is the string const for the standard VM Type
+	StandardVMType = "standard"
+)
+
+// Azure API Versions
+const (
+	APIVersionAuthorizationUser   = "2018-09-01-preview"
+	APIVersionAuthorizationSystem = "2018-01-01-preview"
+	APIVersionCompute             = "2019-07-01"
+	APIVersionDeployments         = "2018-06-01"
+	APIVersionKeyVault            = "2018-02-14"
+	APIVersionManagedIdentity     = "2015-08-31-preview"
+	APIVersionNetwork             = "2018-08-01"
+	APIVersionStorage             = "2018-07-01"
 )
 
 // AzureStackCloud Specific Defaults
@@ -273,6 +265,8 @@ const (
 
 	// MaxAzureStackManagedDiskSize = size for Kubernetes master etcd disk volumes in GB if > 10 nodes as this is max what Azure Stack supports today.
 	MaxAzureStackManagedDiskSize = "1023"
+	// AzureStackSuffix is appended to kubernetes version on Azure Stack instances
+	AzureStackSuffix = "-azs"
 )
 
 const (
@@ -323,15 +317,15 @@ const (
 const (
 	// AzureCniPluginVerLinux specifies version of Azure CNI plugin, which has been mirrored from
 	// https://github.com/Azure/azure-container-networking/releases/download/${AZURE_PLUGIN_VER}/azure-vnet-cni-linux-amd64-${AZURE_PLUGIN_VER}.tgz
-	// to https://acs-mirror.azureedge.net/cni
-	AzureCniPluginVerLinux = "v1.0.28"
+	// to https://kubernetesartifacts.azureedge.net/azure-cni
+	AzureCniPluginVerLinux = "v1.0.30"
 	// AzureCniPluginVerWindows specifies version of Azure CNI plugin, which has been mirrored from
 	// https://github.com/Azure/azure-container-networking/releases/download/${AZURE_PLUGIN_VER}/azure-vnet-cni-windows-amd64-${AZURE_PLUGIN_VER}.zip
-	// to https://acs-mirror.azureedge.net/cni
-	AzureCniPluginVerWindows = "v1.0.28"
+	// to https://kubernetesartifacts.azureedge.net/azure-cni
+	AzureCniPluginVerWindows = "v1.0.30"
 	// CNIPluginVer specifies the version of CNI implementation
 	// https://github.com/containernetworking/plugins
-	CNIPluginVer = "v0.7.5"
+	CNIPluginVer = "v0.7.6"
 )
 
 const (
@@ -381,6 +375,10 @@ const (
 	NetworkPluginCilium = NetworkPolicyCilium
 	// NetworkPluginFlannel is the string expression for flannel network policy config option
 	NetworkPluginFlannel = "flannel"
+	// NetworkPluginAntrea is the string expression for antrea network plugin config option
+	NetworkPluginAntrea = "antrea"
+	// NetworkPolicyAntrea is the string expression for antrea network policy config option
+	NetworkPolicyAntrea = NetworkPluginAntrea
 	// DefaultNetworkPlugin defines the network plugin to use by default
 	DefaultNetworkPlugin = NetworkPluginKubenet
 	// DefaultNetworkPolicy defines the network policy implementation to use by default
@@ -414,7 +412,7 @@ const (
 	//DefaultKubernetesGCLowThreshold specifies the value for the image-gc-low-threshold kubelet flag
 	DefaultKubernetesGCLowThreshold = 80
 	// DefaultEtcdVersion specifies the default etcd version to install
-	DefaultEtcdVersion = "3.3.15"
+	DefaultEtcdVersion = "3.3.18"
 	// DefaultEtcdDiskSize specifies the default size for Kubernetes master etcd disk volumes in GB
 	DefaultEtcdDiskSize = "256"
 	// DefaultEtcdDiskSizeGT3Nodes = size for Kubernetes master etcd disk volumes in GB if > 3 nodes
@@ -423,12 +421,6 @@ const (
 	DefaultEtcdDiskSizeGT10Nodes = "1024"
 	// DefaultEtcdDiskSizeGT20Nodes = size for Kubernetes master etcd disk volumes in GB if > 20 nodes
 	DefaultEtcdDiskSizeGT20Nodes = "2048"
-	// AzureCNINetworkMonitoringAddonName is the name of the Azure CNI networkmonitor addon
-	AzureCNINetworkMonitoringAddonName = "azure-cni-networkmonitor"
-	// AzureNetworkPolicyAddonName is the name of the Azure network policy manager addon
-	AzureNetworkPolicyAddonName = "azure-npm-daemonset"
-	// AzureVnetTelemetryAddonName is the name of the Azure vnet telemetry addon
-	AzureVnetTelemetryAddonName = "azure-vnet-telemetry-daemonset"
 	// DefaultMasterEtcdClientPort is the default etcd client port for Kubernetes master nodes
 	DefaultMasterEtcdClientPort = 2379
 	// DefaultKubeletEventQPS is 0, see --event-qps at https://kubernetes.io/docs/reference/generated/kubelet/
@@ -452,9 +444,9 @@ const (
 	// DefaultKubernetesDNSServiceIP specifies the IP address that kube-dns listens on by default. must by in the default Service CIDR range.
 	DefaultKubernetesDNSServiceIP = "10.0.0.10"
 	// DefaultMobyVersion specifies the default Azure build version of Moby to install.
-	DefaultMobyVersion = "3.0.7"
+	DefaultMobyVersion = "3.0.10"
 	// DefaultContainerdVersion specifies the default containerd version to install.
-	DefaultContainerdVersion = "1.1.5"
+	DefaultContainerdVersion = "1.3.2"
 	// DefaultDockerBridgeSubnet specifies the default subnet for the docker bridge network for masters and agents.
 	DefaultDockerBridgeSubnet = "172.17.0.1/16"
 	// DefaultKubernetesMaxPodsKubenet is the maximum number of pods to run on a node for Kubenet.

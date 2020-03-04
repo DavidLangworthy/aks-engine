@@ -19,7 +19,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
 	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2018-02-01/storage"
 
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 )
 
 // ARMResource contains the fields that are common to all Azure Resource Manager objects.
@@ -188,5 +188,13 @@ type ImageARM struct {
 // DeploymentARM embeds the ARMResource type in resources.DeploymentExtended.
 type DeploymentARM struct {
 	DeploymentARMResource
+	resources.DeploymentExtended
+}
+
+// TODO: Should we skip this type and add the `ResourceGroup` field directly to `DeploymentARM` ?
+// DeploymentWithResourceGroupARM is like `DeploymentARM` but includes `ResourceGroup`.
+type DeploymentWithResourceGroupARM struct {
+	DeploymentARMResource
+	ResourceGroup *string `json:"resourceGroup,omitempty"`
 	resources.DeploymentExtended
 }

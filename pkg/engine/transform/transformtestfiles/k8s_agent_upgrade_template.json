@@ -1065,11 +1065,12 @@
         "azure",
         "calico",
         "cilium",
-        "flannel"
+        "flannel",
+        "antrea"
       ],
       "defaultValue": "none",
       "metadata": {
-        "description": "The network policy enforcement to use (none|azure|calico|cilium|flannel)"
+        "description": "The network policy enforcement to use (none|azure|calico|cilium|flannel|antrea)"
       },
       "type": "string"
     },
@@ -1941,7 +1942,8 @@
         "availabilitySet": {
           "id": "[resourceId('Microsoft.Compute/availabilitySets',variables('masterAvailabilitySet'))]"
         },
-        "hardwareProfile": {},
+        "hardwareProfile": {
+        },
         "networkProfile": {
           "networkInterfaces": [
             {

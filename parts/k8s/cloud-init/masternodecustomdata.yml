@@ -1,7 +1,7 @@
 #cloud-config
 
 write_files:
-- path: /opt/azure/containers/provision_source.sh
+- path: {{GetCSEHelpersScriptFilepath}}
   permissions: "0744"
   encoding: gzip
   owner: root
@@ -15,14 +15,14 @@ write_files:
   content: !!binary |
     {{CloudInitData "provisionScript"}}
 
-- path: /opt/azure/containers/provision_installs.sh
+- path: {{GetCSEInstallScriptFilepath}}
   permissions: "0744"
   encoding: gzip
   owner: root
   content: !!binary |
     {{CloudInitData "provisionInstalls"}}
 
-- path: /opt/azure/containers/provision_configs.sh
+- path: {{GetCSEConfigScriptFilepath}}
   permissions: "0744"
   encoding: gzip
   owner: root
@@ -50,13 +50,20 @@ write_files:
 {{end}}
 
 {{if IsAzureStackCloud}}
-- path: /opt/azure/containers/provision_configs_custom_cloud.sh
+- path: {{GetCustomCloudConfigCSEScriptFilepath}}
   permissions: "0744"
   encoding: gzip
   owner: root
   content: !!binary |
     {{WrapAsVariable "provisionConfigsCustomCloud"}}
 {{end}}
+
+- path: /etc/systemd/system/kubelet.service
+  permissions: "0644"
+  encoding: gzip
+  owner: root
+  content: !!binary |
+    {{CloudInitData "kubeletSystemdService"}}
 
 {{if not .MasterProfile.IsVHDDistro}}
     {{if .MasterProfile.IsCoreOS}}
@@ -91,13 +98,6 @@ write_files:
   content: !!binary |
     {{CloudInitData "dockerMonitorSystemdService"}}
 
-- path: /etc/systemd/system/kubelet.service
-  permissions: "0644"
-  encoding: gzip
-  owner: root
-  content: !!binary |
-    {{CloudInitData "kubeletSystemdService"}}
-
 - path: /opt/azure/containers/label-nodes.sh
   permissions: "0744"
   encoding: gzip
@@ -128,14 +128,14 @@ write_files:
 {{end}}
 
 {{if IsIPv6DualStackFeatureEnabled}}
-- path: /etc/systemd/system/dhcpv6.service
+- path: {{GetDHCPv6ServiceCSEScriptFilepath}}
   permissions: "0644"
   encoding: gzip
   owner: root
   content: !!binary |
     {{CloudInitData "dhcpv6SystemdService"}}
 
-- path: /opt/azure/containers/enable-dhcpv6.sh
+- path: {{GetDHCPv6ConfigCSEScriptFilepath}}
   permissions: "0544"
   encoding: gzip
   owner: root
@@ -183,13 +183,13 @@ write_files:
     }
 {{end}}
 
-{{if eq .OrchestratorProfile.KubernetesConfig.NetworkPlugin "cilium"}}
+{{if HasCiliumNetworkPlugin}}
 - path: /etc/systemd/system/sys-fs-bpf.mount
   permissions: "0644"
   encoding: gzip
   owner: root
   content: !!binary |
-    {{WrapAsVariable "systemdBPFMount"}}
+    {{CloudInitData "systemdBPFMount"}}
 {{end}}
 
 {{if NeedsContainerd}}
@@ -197,28 +197,40 @@ write_files:
   permissions: "0644"
   owner: root
   content: |
+    version = 2
     subreaper = false
     oom_score = 0
-    [plugins.cri]
-    sandbox_image = "{{GetPodInfraContainerSpec}}"
-    [plugins.cri.containerd.untrusted_workload_runtime]
-    runtime_type = "io.containerd.runtime.v1.linux"
-    {{if IsKataContainerRuntime }}
-    runtime_engine = "/usr/bin/kata-runtime"
-    {{else}}
-    runtime_engine = "/usr/local/sbin/runc"
-    {{end}}
-    [plugins.cri.containerd.default_runtime]
-    runtime_type = "io.containerd.runtime.v1.linux"
-    {{if IsKataContainerRuntime }}
-    runtime_engine = "/usr/bin/kata-runtime"
-    {{else}}
-    runtime_engine = "/usr/local/sbin/runc"
-    {{end}}
-    {{if IsKubenet }}
-    [plugins.cri.cni]
-    conf_template = "/etc/containerd/kubenet_template.conf"
 
+    [plugins]
+      [plugins."io.containerd.grpc.v1.cri"]
+        sandbox_image = "{{GetPodInfraContainerSpec}}"
+        [plugins."io.containerd.grpc.v1.cri".cni]
+          {{if IsKubenet}}
+          conf_template = "/etc/containerd/kubenet_template.conf"
+          {{end}}
+        [plugins."io.containerd.grpc.v1.cri".containerd]
+          {{if IsKataContainerRuntime }}
+          default_runtime_name = "kata"
+          {{else}}
+          default_runtime_name = "runc"
+          {{end}}
+         [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+              runtime_type = "io.containerd.runc.v2"
+            {{if IsKataContainerRuntime }}
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata]
+              runtime_type = "io.containerd.kata.v2"
+            {{end}}
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.untrusted]
+              {{if IsKataContainerRuntime }}
+              runtime_engine = "/usr/bin/kata-runtime"
+              runtime_type = "io.containerd.kata.v2"
+              {{else}}
+              {{/* note: runc really should not be used for untrusted workloads... should we remove this? This is here because it was here before */}}
+              runtime_type = "io.containerd.runc.v2"
+              {{end}}
+
+  {{if IsKubenet}}
 - path: /etc/containerd/kubenet_template.conf
   permissions: "0644"
   owner: root
@@ -267,8 +279,8 @@ write_files:
     {{CloudInitData "generateProxyCertsScript"}}
 {{end}}
 
-{{if and HasLinuxProfile HasCustomSearchDomain}}
-- path: /opt/azure/containers/setup-custom-search-domains.sh
+{{if HasCustomSearchDomain}}
+- path: {{GetCustomSearchDomainsCSEScriptFilepath}}
   permissions: "0744"
   encoding: gzip
   owner: root
@@ -336,13 +348,11 @@ write_files:
         - kms:
             name: azurekmsprovider
             endpoint: unix:///opt/azurekms.socket
-            cachesize: 0
+            cachesize: 1000
         - identity: {}
 {{end}}
 
 MASTER_MANIFESTS_CONFIG_PLACEHOLDER
-
-MASTER_ADDONS_CONFIG_PLACEHOLDER
 
 MASTER_CUSTOM_FILES_PLACEHOLDER
 
@@ -352,13 +362,10 @@ MASTER_CONTAINER_ADDONS_PLACEHOLDER
   permissions: "0644"
   owner: root
   content: |
-{{if NeedsContainerd}}
-    KUBELET_OPTS=--container-runtime=remote --runtime-request-timeout=15m --container-runtime-endpoint=unix:///run/containerd/containerd.sock
-{{else}}
-    KUBELET_OPTS=
-{{end}}
     KUBELET_CONFIG={{GetKubeletConfigKeyVals .MasterProfile.KubernetesConfig}}
-    KUBELET_IMAGE={{WrapAsParameter "kubernetesHyperkubeSpec"}}
+{{- if not (IsKubernetesVersionGe "1.17.0")}}
+    KUBELET_IMAGE={{GetHyperkubeImageReference}}
+{{end}}
 {{if IsKubernetesVersionGe "1.16.0"}}
     KUBELET_NODE_LABELS={{GetMasterKubernetesLabels "',variables('labelResourceGroup'),'"}}
 {{else}}
@@ -367,13 +374,9 @@ MASTER_CONTAINER_ADDONS_PLACEHOLDER
 {{if IsAzureStackCloud }}
     AZURE_ENVIRONMENT_FILEPATH=/etc/kubernetes/azurestackcloud.json
 {{end}}
-{{if IsKubernetesVersionGe "1.6.0"}}
-  {{if AnyAgentIsLinux}}
+{{if AnyAgentIsLinux}}
     KUBELET_REGISTER_NODE=--register-node=true
     KUBELET_REGISTER_WITH_TAINTS=--register-with-taints=node-role.kubernetes.io/master=true:NoSchedule
-  {{end}}
-{{else}}
-    KUBELET_REGISTER_SCHEDULABLE={{WrapAsVariable "registerSchedulable"}}
 {{end}}
     #EOF
 
@@ -395,42 +398,7 @@ MASTER_CONTAINER_ADDONS_PLACEHOLDER
     # Redirect ILB (4443) traffic to port 443 (ELB) in the prerouting chain
     iptables -t nat -A PREROUTING -p tcp --dport 4443 -j REDIRECT --to-port 443
 {{end}}
-
-    sed -i "s|<img>|{{WrapAsParameter "kubernetesAddonManagerSpec"}}|g" /etc/kubernetes/manifests/kube-addon-manager.yaml
-    for a in "/etc/kubernetes/manifests/kube-apiserver.yaml /etc/kubernetes/manifests/kube-controller-manager.yaml /etc/kubernetes/manifests/kube-scheduler.yaml"; do
-      sed -i "s|<img>|{{WrapAsParameter "kubernetesHyperkubeSpec"}}|g" $a
-    done
-    a=/etc/kubernetes/manifests/kube-apiserver.yaml
-    sed -i "s|<args>|{{GetK8sRuntimeConfigKeyVals .OrchestratorProfile.KubernetesConfig.APIServerConfig}}|g" $a
-{{ if HasCosmosEtcd  }}
-    sed -i "s|<etcdEndPointUri>|{{ GetCosmosEndPointUri }}|g" $a
-{{ else }}
-    sed -i "s|<etcdEndPointUri>|127.0.0.1|g" $a
-{{ end }}
-    sed -i "s|<advertiseAddr>|{{WrapAsVariable "kubernetesAPIServerIP"}}|g" $a
-    sed -i "s|<args>|{{GetK8sRuntimeConfigKeyVals .OrchestratorProfile.KubernetesConfig.ControllerManagerConfig}}|g" /etc/kubernetes/manifests/kube-controller-manager.yaml
-    sed -i "s|<args>|{{GetK8sRuntimeConfigKeyVals .OrchestratorProfile.KubernetesConfig.SchedulerConfig}}|g" /etc/kubernetes/manifests/kube-scheduler.yaml
-    {{ if IsIPv6DualStackFeatureEnabled }}
-    sed -i "s|<img>|{{WrapAsParameter "kubernetesHyperkubeSpec"}}|g; s|<CIDR>|{{WrapAsParameter "kubeClusterCidr"}}|g; s|<kubeProxyMode>|{{ .OrchestratorProfile.KubernetesConfig.ProxyMode}}|g; s|<IPv6DualStackFeature>|IPv6DualStack: true|g" /etc/kubernetes/addons/kube-proxy-daemonset.yaml
-    {{ else }}
-    sed -i "s|<img>|{{WrapAsParameter "kubernetesHyperkubeSpec"}}|g; s|<CIDR>|{{WrapAsParameter "kubeClusterCidr"}}|g; s|<kubeProxyMode>|{{ .OrchestratorProfile.KubernetesConfig.ProxyMode}}|g; s|<IPv6DualStackFeature>|{}|g" /etc/kubernetes/addons/kube-proxy-daemonset.yaml
-    {{ end }}
-    KUBEDNS=/etc/kubernetes/addons/kube-dns-deployment.yaml
-{{if NeedsKubeDNSWithExecHealthz}}
-    sed -i "s|<img>|{{WrapAsParameter "kubernetesKubeDNSSpec"}}|g; s|<imgMasq>|{{WrapAsParameter "kubernetesDNSMasqSpec"}}|g; s|<imgHealthz>|{{WrapAsParameter "kubernetesExecHealthzSpec"}}|g; s|<imgSidecar>|{{WrapAsParameter "kubernetesDNSSidecarSpec"}}|g; s|<domain>|{{WrapAsParameter "kubernetesKubeletClusterDomain"}}|g; s|<clustIP>|{{WrapAsParameter "kubeDNSServiceIP"}}|g" $KUBEDNS
-{{else if IsKubernetesVersionGe "1.12.0"}}
-    sed -i "s|<img>|{{WrapAsParameter "kubernetesCoreDNSSpec"}}|g; s|<domain>|{{WrapAsParameter "kubernetesKubeletClusterDomain"}}|g; s|<clustIP>|{{WrapAsParameter "kubeDNSServiceIP"}}|g" /etc/kubernetes/addons/coredns.yaml
-{{else}}
-    sed -i "s|<img>|{{WrapAsParameter "kubernetesKubeDNSSpec"}}|g; s|<imgMasq>|{{WrapAsParameter "kubernetesDNSMasqSpec"}}|g; s|<imgSidecar>|{{WrapAsParameter "kubernetesDNSSidecarSpec"}}|g; s|<domain>|{{WrapAsParameter "kubernetesKubeletClusterDomain"}}|g; s|<clustIP>|{{WrapAsParameter "kubeDNSServiceIP"}}|g" $KUBEDNS
-{{end}}
-
-{{if AdminGroupID }}
-    sed -i "s|<gID>|{{WrapAsParameter "aadAdminGroupId"}}|g" "/etc/kubernetes/addons/aad-default-admin-group-rbac.yaml"
-{{end}}
-
-{{if .OrchestratorProfile.KubernetesConfig.IsClusterAutoscalerEnabled}}
-    sed -i "s|<cloud>|{{WrapAsParameter "kubernetesClusterAutoscalerAzureCloud"}}|g; s|<useManagedIdentity>|{{WrapAsParameter "kubernetesClusterAutoscalerUseManagedIdentity"}}|g" /etc/kubernetes/addons/cluster-autoscaler-deployment.yaml
-{{end}}
+    sed -i "s|<advertiseAddr>|{{WrapAsVariable "kubernetesAPIServerIP"}}|g" /etc/kubernetes/manifests/kube-apiserver.yaml
 
 {{if EnableDataEncryptionAtRest }}
     sed -i "s|<etcdEncryptionSecret>|\"{{WrapAsParameter "etcdEncryptionKey"}}\"|g" /etc/kubernetes/encryption-config.yaml
@@ -448,16 +416,6 @@ MASTER_CONTAINER_ADDONS_PLACEHOLDER
 {{if eq .OrchestratorProfile.KubernetesConfig.NetworkPlugin "flannel"}}
     sed -i "s|<kubeClusterCidr>|{{WrapAsParameter "kubeClusterCidr"}}|g" /etc/kubernetes/addons/flannel-daemonset.yaml
 {{end}}
-{{if UseCloudControllerManager }}
-    sed -i "s|<img>|{{WrapAsParameter "kubernetesCcmImageSpec"}}|g" /etc/kubernetes/manifests/cloud-controller-manager.yaml
-    sed -i "s|<config>|{{GetK8sRuntimeConfigKeyVals .OrchestratorProfile.KubernetesConfig.CloudControllerManagerConfig}}|g" /etc/kubernetes/manifests/cloud-controller-manager.yaml
-{{end}}
-{{if EnableEncryptionWithExternalKms}}
-    sed -i "s|# Required|Requires=kms.service|g" /etc/systemd/system/kubelet.service
-{{end}}
-{{if HasLinuxProfile}}{{if HasCustomSearchDomain}}
-    sed -i "s|<searchDomainName>|{{WrapAsParameter "searchDomainName"}}|g; s|<searchDomainRealmUser>|{{WrapAsParameter "searchDomainRealmUser"}}|g; s|<searchDomainRealmPassword>|{{WrapAsParameter "searchDomainRealmPassword"}}|g" /opt/azure/containers/setup-custom-search-domains.sh
-{{end}}{{end}}
     #EOF
 
 - path: /opt/azure/containers/mountetcd.sh
@@ -480,6 +438,11 @@ MASTER_CONTAINER_ADDONS_PLACEHOLDER
   content: |
     #!/bin/bash
     set -x
+    if [[ ! -s /etc/environment ]]; then
+        {{- /* /etc/environment is empty, which will break subsequent sed commands
+               Append a blank line... */}}
+        echo "" >> /etc/environment
+    fi
   {{if IsMasterVirtualMachineScaleSets}}
     MASTER_VM_NAME=$(hostname)
     MASTER_VM_NAME_BASE=$(hostname | sed "s/.$//")
@@ -544,7 +507,7 @@ MASTER_CONTAINER_ADDONS_PLACEHOLDER
   owner: root
   content: |
     #!/bin/bash
-    source /opt/azure/containers/provision_source.sh
+    source {{GetCSEHelpersScriptFilepath}}
     /opt/azure/containers/mountetcd.sh
     retrycmd_if_failure 5 5 10 curl --retry 5 --retry-delay 10 --retry-max-time 10 --max-time 60 https://127.0.0.1:2379/v2/machines
 
@@ -619,6 +582,6 @@ coreos:
 {{else}}
 runcmd:
 - set -x
-- . /opt/azure/containers/provision_source.sh
+- . {{GetCSEHelpersScriptFilepath}}
 - aptmarkWALinuxAgent hold{{GetKubernetesMasterPreprovisionYaml}}
 {{end}}

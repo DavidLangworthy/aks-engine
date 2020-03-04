@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/services/authorization/mgmt/2015-07-01/authorization"
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 	"github.com/Azure/azure-sdk-for-go/services/graphrbac/1.6/graphrbac"
 	"github.com/Azure/azure-sdk-for-go/services/preview/msi/mgmt/2015-08-31-preview/msi"
+	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2016-06-01/subscriptions"
 	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2018-05-01/resources"
+
 	azStorage "github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/Azure/go-autorest/autorest"
 	log "github.com/sirupsen/logrus"
@@ -79,6 +81,16 @@ type DiskListPage interface {
 	Values() []compute.Disk
 }
 
+//VMImageFetcher is an extension of AKSEngine client allows us to operate on the virtual machine images in the environment
+type VMImageFetcher interface {
+
+	// ListVirtualMachineImages return a list of images
+	ListVirtualMachineImages(ctx context.Context, location, publisherName, offer, skus string) (compute.ListVirtualMachineImageResource, error)
+
+	// GetVirtualMachineImage return a virtual machine image
+	GetVirtualMachineImage(ctx context.Context, location, publisherName, offer, skus, version string) (compute.VirtualMachineImage, error)
+}
+
 // AKSEngineClient is the interface used to talk to an Azure environment.
 // This interface exposes just the subset of Azure APIs and clients needed for
 // AKS Engine.
@@ -98,10 +110,13 @@ type AKSEngineClient interface {
 	// EnsureResourceGroup ensures the specified resource group exists in the specified location
 	EnsureResourceGroup(ctx context.Context, resourceGroup, location string, managedBy *string) (*resources.Group, error)
 
+	// ListLocations returns all the Azure locations to which AKS Engine can deploy
+	ListLocations(ctx context.Context) (*[]subscriptions.Location, error)
+
 	//
 	// COMPUTE
 
-	// List lists VM resources
+	// ListVirtualMachines lists VM resources
 	ListVirtualMachines(ctx context.Context, resourceGroup string) (VirtualMachineListResultPage, error)
 
 	// GetVirtualMachine retrieves the specified virtual machine.

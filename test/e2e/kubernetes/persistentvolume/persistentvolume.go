@@ -1,3 +1,4 @@
+//+build test
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
@@ -118,7 +119,8 @@ func WaitOnReady(pvCount int, sleep, timeout time.Duration) bool {
 			select {
 			case <-ctx.Done():
 				return
-			case ch <- AreAllReady(pvCount):
+			default:
+				ch <- AreAllReady(pvCount)
 				time.Sleep(sleep)
 			}
 		}

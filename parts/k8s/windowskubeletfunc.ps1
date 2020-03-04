@@ -67,7 +67,7 @@ Write-AzureConfig {
     "primaryAvailabilitySetName": "$PrimaryAvailabilitySetName",
     "primaryScaleSetName": "$PrimaryScaleSetName",
     "useManagedIdentityExtension": $UseManagedIdentityExtension,
-    "userAssignedIdentityID": $UserAssignedClientID,
+    "userAssignedIdentityID": "$UserAssignedClientID",
     "useInstanceMetadata": $UseInstanceMetadata,
     "loadBalancerSku": "$LoadBalancerSku",
     "excludeMasterFromStandardLB": $ExcludeMasterFromStandardLB
@@ -143,7 +143,7 @@ Build-PauseContainer {
     # Future work: This needs to build wincat - see https://github.com/Azure/aks-engine/issues/1461
     "FROM $($WindowsBase)" | Out-File -encoding ascii -FilePath Dockerfile
     "CMD cmd /c ping -t localhost" | Out-File -encoding ascii -FilePath Dockerfile -Append
-    docker build -t $DestinationTag .
+    Invoke-Executable -Executable "docker" -ArgList @("build", "-t", "$DestinationTag", ".")
 }
 
 function
@@ -159,31 +159,44 @@ New-InfraContainer {
     # Reference for these tags: curl -L https://mcr.microsoft.com/v2/k8s/core/pause/tags/list
     # Then docker run --rm mplatform/manifest-tool inspect mcr.microsoft.com/k8s/core/pause:<tag>
 
-    $defaultPauseImage = "mcr.microsoft.com/k8s/core/pause:1.2.0"
+    $defaultPauseImage = "mcr.microsoft.com/oss/kubernetes/pause:1.3.0"
 
-    switch ($computerInfo.WindowsVersion) {
-        "1803" { 
-            $imageList = docker images $defaultPauseImage --format "{{.Repository}}:{{.Tag}}"
-            if (-not $imageList) {
-                docker pull $defaultPauseImage                 
-            }
-            docker tag $defaultPauseImage $DestinationTag
+    $pauseImageVersions = @("1803", "1809", "1903", "1909")
+
+    if ($pauseImageVersions -icontains $computerInfo.WindowsVersion) {
+        $imageList = docker images $defaultPauseImage --format "{{.Repository}}:{{.Tag}}"
+        if (-not $imageList) {
+            Invoke-Executable -Executable "docker" -ArgList @("pull", "$defaultPauseImage") -Retries 5 -RetryDelaySeconds 30
         }
-        "1809" { 
-            $imageList = docker images $defaultPauseImage --format "{{.Repository}}:{{.Tag}}"
-            if (-not $imageList) {
-                docker pull $defaultPauseImage                
-            }
-            docker tag $defaultPauseImage $DestinationTag 
-        }
-        "1903" { Build-PauseContainer -WindowsBase "mcr.microsoft.com/windows/nanoserver:1903" -DestinationTag $DestinationTag}
-        default { Build-PauseContainer -WindowsBase "mcr.microsoft.com/nanoserver-insider" -DestinationTag $DestinationTag}
+        Invoke-Executable -Executable "docker" -ArgList @("tag", "$defaultPauseImage", "$DestinationTag")
     }
+    else {
+        Build-PauseContainer -WindowsBase "mcr.microsoft.com/nanoserver-insider" -DestinationTag $DestinationTag
+    }
+}
+
+function
+Test-ContainerImageExists {
+    Param(
+        [Parameter(Mandatory = $true)][string]
+        $Image,
+        [Parameter(Mandatory = $false)][string]
+        $Tag
+    )
+
+    $target = $Image
+    if ($Tag) {
+        $target += ":$Tag"
+    }
+
+    $images = docker image list $target --format "{{json .}}"
+
+    return $images.Count -gt 0
 }
 
 
 # TODO: Deprecate this and replace with methods that get individual components instead of zip containing everything
-# This expects the ZIP file to be created by scripts/build-windows-k8s.sh
+# This expects the ZIP file created by Azure Pipelines.
 function
 Get-KubePackage {
     Param(
@@ -261,7 +274,7 @@ New-NSSMService {
     & "$KubeDir\nssm.exe" set Kubelet AppRestartDelay 5000
     & "$KubeDir\nssm.exe" set Kubelet DependOnService docker
     & "$KubeDir\nssm.exe" set Kubelet Description Kubelet
-    & "$KubeDir\nssm.exe" set Kubelet Start SERVICE_AUTO_START
+    & "$KubeDir\nssm.exe" set Kubelet Start SERVICE_DEMAND_START
     & "$KubeDir\nssm.exe" set Kubelet ObjectName LocalSystem
     & "$KubeDir\nssm.exe" set Kubelet Type SERVICE_WIN32_OWN_PROCESS
     & "$KubeDir\nssm.exe" set Kubelet AppThrottle 1500
@@ -272,7 +285,7 @@ New-NSSMService {
     & "$KubeDir\nssm.exe" set Kubelet AppRotateFiles 1
     & "$KubeDir\nssm.exe" set Kubelet AppRotateOnline 1
     & "$KubeDir\nssm.exe" set Kubelet AppRotateSeconds 86400
-    & "$KubeDir\nssm.exe" set Kubelet AppRotateBytes 1048576
+    & "$KubeDir\nssm.exe" set Kubelet AppRotateBytes 10485760
 
     # setup kubeproxy
     & "$KubeDir\nssm.exe" install Kubeproxy C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
@@ -281,7 +294,7 @@ New-NSSMService {
     & "$KubeDir\nssm.exe" set Kubeproxy DisplayName Kubeproxy
     & "$KubeDir\nssm.exe" set Kubeproxy DependOnService Kubelet
     & "$KubeDir\nssm.exe" set Kubeproxy Description Kubeproxy
-    & "$KubeDir\nssm.exe" set Kubeproxy Start SERVICE_AUTO_START
+    & "$KubeDir\nssm.exe" set Kubeproxy Start SERVICE_DEMAND_START
     & "$KubeDir\nssm.exe" set Kubeproxy ObjectName LocalSystem
     & "$KubeDir\nssm.exe" set Kubeproxy Type SERVICE_WIN32_OWN_PROCESS
     & "$KubeDir\nssm.exe" set Kubeproxy AppThrottle 1500
@@ -290,7 +303,7 @@ New-NSSMService {
     & "$KubeDir\nssm.exe" set Kubeproxy AppRotateFiles 1
     & "$KubeDir\nssm.exe" set Kubeproxy AppRotateOnline 1
     & "$KubeDir\nssm.exe" set Kubeproxy AppRotateSeconds 86400
-    & "$KubeDir\nssm.exe" set Kubeproxy AppRotateBytes 1048576
+    & "$KubeDir\nssm.exe" set Kubeproxy AppRotateBytes 10485760
 }
 
 # Renamed from Write-KubernetesStartFiles
@@ -409,50 +422,6 @@ Write-Host "NetworkPlugin azure, starting kubelet."
 # Turn off Firewall to enable pods to talk to service endpoints. (Kubelet should eventually do this)
 netsh advfirewall set allprofiles state off
 # startup the service
-
-# Find if the primary external switch network exists. If not create one.
-# This is done only once in the lifetime of the node
-`$hnsNetwork = Get-HnsNetwork | ? Name -EQ `$global:ExternalNetwork
-if (!`$hnsNetwork)
-{
-    Write-Host "Creating a new hns Network"
-    ipmo `$global:HNSModule
-
-    `$na = @(Get-NetAdapter -Physical)
-    if (`$na.Count -eq 0)
-    {
-        throw "Failed to find any physical network adapters"
-    }
-
-    # If there is more than one adapter, use the first adapter.
-    `$managementIP = (Get-NetIPAddress -ifIndex `$na[0].ifIndex -AddressFamily IPv4).IPAddress
-    `$adapterName = `$na[0].Name
-    write-host "Using adapter `$adapterName with IP address `$managementIP"
-    `$mgmtIPAfterNetworkCreate
-
-    `$stopWatch = New-Object System.Diagnostics.Stopwatch
-    `$stopWatch.Start()
-    # Fixme : use a smallest range possible, that will not collide with any pod space
-    New-HNSNetwork -Type `$global:NetworkMode -AddressPrefix "192.168.255.0/30" -Gateway "192.168.255.1" -AdapterName `$adapterName -Name `$global:ExternalNetwork -Verbose
-
-    # Wait for the switch to be created and the ip address to be assigned.
-    for (`$i=0;`$i -lt 60;`$i++)
-    {
-        `$mgmtIPAfterNetworkCreate = Get-NetIPAddress `$managementIP -ErrorAction SilentlyContinue
-        if (`$mgmtIPAfterNetworkCreate)
-        {
-            break
-        }
-        sleep -Milliseconds 1000
-    }
-
-    `$stopWatch.Stop()
-    if (-not `$mgmtIPAfterNetworkCreate)
-    {
-        throw "Failed to find `$managementIP after creating `$global:ExternalNetwork network"
-    }
-    write-host "It took `$(`$StopWatch.Elapsed.Seconds) seconds to create the `$global:ExternalNetwork network."
-}
 
 # Find if network created by CNI exists, if yes, remove it
 # This is required to keep the network non-persistent behavior
